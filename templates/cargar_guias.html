@@ -1,0 +1,22 @@
+
+<!doctype html>
+<html>
+<head><title>Cargar Guías</title></head>
+<body>
+  <h1>Cargar Archivo Excel de Guías</h1>
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      <ul>
+      {% for msg in messages %}
+        <li style="color:red;">{{ msg }}</li>
+      {% endfor %}
+      </ul>
+    {% endif %}
+  {% endwith %}
+  <form method="post" enctype="multipart/form-data">
+    <input type="file" name="archivo">
+    <input type="submit" value="Subir">
+  </form>
+  <a href="{{ url_for('index') }}">Volver al Inicio</a>
+</body>
+</html>

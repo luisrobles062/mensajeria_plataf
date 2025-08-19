@@ -1,0 +1,89 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Registrar Recogida</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <style>
+        body {
+            background: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 20px;
+        }
+        .container {
+            max-width: 500px;
+            background: #ffffff;
+            padding: 30px 40px;
+            border-radius: 10px;
+            box-shadow: 0 6px 15px rgba(0,0,0,0.1);
+        }
+        h2 {
+            margin-bottom: 25px;
+            font-weight: 700;
+            color: #333;
+            text-align: center;
+        }
+        .btn-primary {
+            background-color: #007bff;
+            border: none;
+            font-weight: 600;
+            width: 100%;
+            padding: 12px;
+            font-size: 1.1rem;
+            transition: background-color 0.3s ease;
+        }
+        .btn-primary:hover {
+            background-color: #0056b3;
+        }
+        label {
+            font-weight: 600;
+            color: #555;
+        }
+        input, textarea {
+            box-shadow: none !important;
+            border: 1.5px solid #ced4da;
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-size: 1rem;
+        }
+        textarea {
+            resize: vertical;
+        }
+        .flash-message {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Registrar Recogida</h2>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ category }} flash-message" role="alert">
+                {{ message|safe }}
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="{{ url_for('registrar_recogida') }}">
+            <div class="mb-3">
+                <label for="numero_guia" class="form-label">Número de Guía</label>
+                <input type="text" class="form-control" id="numero_guia" name="numero_guia" required />
+            </div>
+            <div class="mb-3">
+                <label for="fecha" class="form-label">Fecha</label>
+                <input type="date" class="form-control" id="fecha" name="fecha" required />
+            </div>
+            <div class="mb-3">
+                <label for="observaciones" class="form-label">Observaciones</label>
+                <textarea class="form-control" id="observaciones" name="observaciones" rows="3" placeholder="Opcional"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Registrar Recogida</button>
+        </form>
+    </div>
+</body>
+</html>

@@ -1,0 +1,40 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Ver Despachos</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+</head>
+<body class="bg-light">
+    <div class="container mt-5">
+        <h1 class="mb-4">📦 Despachos Registrados</h1>
+
+        {% if despachos %}
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Número de Guía</th>
+                        <th>Mensajero</th>
+                        <th>Zona</th>
+                        <th>Fecha</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in despachos %}
+                    <tr>
+                        <td>{{ d.numero_guia }}</td>
+                        <td>{{ d.mensajero }}</td>
+                        <td>{{ d.zona }}</td>
+                        <td>{{ d.fecha }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p>No hay despachos registrados.</p>
+        {% endif %}
+
+        <a href="/" class="btn btn-secondary">Volver al inicio</a>
+    </div>
+</body>
+</html>

@@ -1,0 +1,27 @@
+
+<!doctype html>
+<html>
+<head><title>Guías Cargadas</title></head>
+<body>
+  <h1>Listado de Guías</h1>
+  {% if guias %}
+    <table border="1">
+      <tr>
+        <th>Remitente</th><th>Número Guía</th><th>Destinatario</th><th>Dirección</th><th>Ciudad</th>
+      </tr>
+      {% for guia in guias %}
+      <tr>
+        <td>{{ guia.remitente }}</td>
+        <td>{{ guia.numero_guia }}</td>
+        <td>{{ guia.destinatario }}</td>
+        <td>{{ guia.direccion }}</td>
+        <td>{{ guia.ciudad }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p>No hay guías cargadas aún.</p>
+  {% endif %}
+  <a href="{{ url_for('index') }}">Volver al Inicio</a>
+</body>
+</html>
