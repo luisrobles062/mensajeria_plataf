@@ -1,24 +1,14 @@
-{
-  "name": "mensajeria-plataf---copia",
+﻿{
+  "name": "mensajeria-plataf",
   "version": "1.0.0",
-  "description": "",
   "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/luisrobles062/mensajeria_plataf.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/luisrobles062/mensajeria_plataf/issues"
+  "scripts": {
+    "build": "echo \"no build step\"",
+    "start": "node index.js"
   },
-  "homepage": "https://github.com/luisrobles062/mensajeria_plataf#readme",
   "dependencies": {
-    "pg": "^8.16.3"
+    "express": "^4.19.2",
+    "pg": "^8.11.5"
   }
 }
