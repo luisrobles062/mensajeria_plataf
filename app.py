@@ -1,286 +1,209 @@
-import os
-import logging
-from datetime import datetime
-from contextlib import contextmanager
-from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
-
+from flask import Flask, render_template, request, redirect, url_for, flash
 import pandas as pd
 import psycopg2
-from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extras import RealDictCursor
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file
+from datetime import datetime
+import os
 
 app = Flask(__name__)
 app.secret_key = 'secreto'
-DATA_DIR = 'data'
-os.makedirs(DATA_DIR, exist_ok=True)
 
-# =========================
-#  Conexión a Postgres/Neon
-# =========================
+# ---------------------------
+# Conexión a la base de datos Neon PostgreSQL
+# ---------------------------
+DATABASE_URL = "postgresql://neondb_owner:npg_cjyR1qu3gYLv@ep-sweet-moon-adescaz8-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
-def normalize_db_url(raw_url: str) -> str:
-    if not raw_url:
-        return raw_url
-    parsed = urlparse(raw_url)
-    q = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    q.pop("channel_binding", None)
-    if "sslmode" not in q:
-        q["sslmode"] = "require"
-    if "application_name" not in q:
-        q["application_name"] = "mensajeria_plataf"
-    new_query = urlencode(q)
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
-
-DATABASE_URL = normalize_db_url(os.getenv("DATABASE_URL", ""))
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL no está definida.")
-
-POOL_MIN = int(os.getenv("PG_POOL_MIN", "1"))
-POOL_MAX = int(os.getenv("PG_POOL_MAX", "5"))
-
-pool = ThreadedConnectionPool(minconn=POOL_MIN, maxconn=POOL_MAX, dsn=DATABASE_URL)
-
-@contextmanager
 def get_conn():
-    conn = pool.getconn()
-    try:
-        yield conn
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    return conn
+
+# ---------------------------
+# Página principal
+# ---------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+# ---------------------------
+# Cargar base de guías
+# ---------------------------
+@app.route('/cargar_base', methods=['GET', 'POST'])
+def cargar_base():
+    if request.method == 'POST':
+        file = request.files['archivo']
+        if not file:
+            flash("No se seleccionó archivo", "danger")
+            return redirect(request.url)
+        df = pd.read_excel(file)
+        # Guardar en la tabla "guias"
+        conn = get_conn()
+        cur = conn.cursor()
+        for _, row in df.iterrows():
+            cur.execute("""
+                INSERT INTO guias (remitente, numero_guia, destinatario, direccion, ciudad, estado)
+                VALUES (%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (numero_guia) DO NOTHING
+            """, (row['remitente'], row['numero_guia'], row['destinatario'], row['direccion'], row['ciudad'], 'Pendiente'))
         conn.commit()
-    finally:
-        pool.putconn(conn)
+        cur.close()
+        conn.close()
+        flash("Base cargada correctamente", "success")
+        return redirect(url_for('index'))
+    return render_template('cargar_base.html')
 
-def db_exec(sql, params=()):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-
-def db_fetchone_dict(sql, params=()):
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, params)
-            return cur.fetchone()
-
-def db_fetchall_dict(sql, params=()):
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, params)
-            return cur.fetchall()
-
-def read_sql_df(sql, params=None):
-    with get_conn() as conn:
-        return pd.read_sql(sql, conn, params=params)
-
-# =========================
-#   Esquema
-# =========================
-
-def ensure_schema():
-    db_exec("""
-        CREATE TABLE IF NOT EXISTS zonas (
-            nombre TEXT PRIMARY KEY,
-            tarifa NUMERIC NOT NULL
-        );
-    """)
-    db_exec("""
-        CREATE TABLE IF NOT EXISTS mensajeros (
-            nombre TEXT PRIMARY KEY,
-            zona TEXT REFERENCES zonas(nombre)
-        );
-    """)
-    db_exec("""
-        CREATE TABLE IF NOT EXISTS guias (
-            remitente TEXT,
-            numero_guia TEXT PRIMARY KEY,
-            destinatario TEXT,
-            direccion TEXT,
-            ciudad TEXT
-        );
-    """)
-    db_exec("""
-        CREATE TABLE IF NOT EXISTS despachos (
-            numero_guia TEXT PRIMARY KEY,
-            mensajero TEXT,
-            zona TEXT,
-            fecha TIMESTAMPTZ NOT NULL
-        );
-    """)
-    db_exec("""
-        CREATE TABLE IF NOT EXISTS recepciones (
-            numero_guia TEXT PRIMARY KEY,
-            tipo TEXT,
-            motivo TEXT,
-            fecha TIMESTAMPTZ NOT NULL
-        );
-    """)
-    db_exec("""
-        CREATE TABLE IF NOT EXISTS recogidas (
-            id SERIAL PRIMARY KEY,
-            numero_guia TEXT,
-            fecha TIMESTAMPTZ NOT NULL,
-            observaciones TEXT
-        );
-    """)
-
-# =========================
-#   Modelos en memoria
-# =========================
-
-class Zona:
-    def __init__(self, nombre, tarifa):
-        self.nombre = nombre
-        self.tarifa = float(tarifa) if tarifa is not None else 0.0
-
-class Mensajero:
-    def __init__(self, nombre, zona):
-        self.nombre = nombre
-        self.zona = zona
-
-zonas = []
-mensajeros = []
-guias = pd.DataFrame(columns=['remitente', 'numero_guia', 'destinatario', 'direccion', 'ciudad'])
-despachos = []
-recepciones = []
-recogidas = []
-
-# =========================
-#   Cargar datos desde DB
-# =========================
-
-def cargar_datos_desde_db():
-    global zonas, mensajeros, guias, despachos, recepciones, recogidas
-    zrows = db_fetchall_dict("SELECT nombre, tarifa FROM zonas;")
-    zonas = [Zona(r["nombre"], r["tarifa"]) for r in zrows]
-
-    mrows = db_fetchall_dict("SELECT nombre, zona FROM mensajeros;")
-    zonas_map = {z.nombre: z for z in zonas}
-    mensajeros = [Mensajero(r["nombre"], zonas_map.get(r["zona"])) for r in mrows]
-
-    guias = read_sql_df("SELECT remitente, numero_guia, destinatario, direccion, ciudad FROM guias;")
-
-    despachos = db_fetchall_dict("SELECT numero_guia, mensajero, zona, fecha FROM despachos ORDER BY fecha DESC;")
-    recepciones = db_fetchall_dict("SELECT numero_guia, tipo, motivo, fecha FROM recepciones ORDER BY fecha DESC;")
-    recogidas = db_fetchall_dict("SELECT numero_guia, fecha, observaciones FROM recogidas ORDER BY fecha DESC;")
-
-    globals().update({"zonas": zonas, "mensajeros": mensajeros, "guias": guias,
-                      "despachos": despachos, "recepciones": recepciones, "recogidas": recogidas})
-
-logging.basicConfig(level=logging.INFO)
-ensure_schema()
-cargar_datos_desde_db()
-
-# =========================
-#   Rutas básicas (index, cargar base, zonas, mensajeros, despachos, recepciones, liquidacion, recogidas)
-# =========================
-
-# ... AQUÍ VAN TODAS TUS RUTAS EXISTENTES (ya las tienes) ...
-# Las mantendremos tal cual tu app.py actual
-
-# =========================
-#   Consultas avanzadas y exportaciones a Excel
-# =========================
-
-@app.route("/consultar_pendientes", methods=["GET", "POST"])
-def consultar_pendientes():
-    resultados = []
+# ---------------------------
+# Registrar zona
+# ---------------------------
+@app.route('/registrar_zona', methods=['GET', 'POST'])
+def registrar_zona():
     if request.method == 'POST':
-        mensajero_nombre = request.form.get('mensajero')
-        fecha_inicio = request.form.get('fecha_inicio')
-        fecha_fin = request.form.get('fecha_fin')
-        query = """
-            SELECT g.remitente, g.numero_guia, g.destinatario, g.direccion, g.ciudad,
-                   d.mensajero, d.fecha as fecha_despacho
-            FROM guias g
-            JOIN despachos d ON g.numero_guia = d.numero_guia
-            LEFT JOIN recepciones r ON g.numero_guia = r.numero_guia
-            WHERE r.numero_guia IS NULL AND d.mensajero = %s AND DATE(d.fecha) BETWEEN %s AND %s
-        """
-        resultados = db_fetchall_dict(query, (mensajero_nombre, fecha_inicio, fecha_fin))
-    return render_template('consultar_pendientes.html', resultados=resultados, mensajeros=mensajeros)
+        nombre = request.form['nombre']
+        tarifa = float(request.form['tarifa'])
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO zonas (nombre, tarifa) VALUES (%s,%s) ON CONFLICT (nombre) DO NOTHING", (nombre, tarifa))
+        conn.commit()
+        cur.close()
+        conn.close()
+        flash("Zona registrada", "success")
+        return redirect(url_for('index'))
+    return render_template('registrar_zona.html')
 
-@app.route("/exportar_pendientes", methods=["POST"])
-def exportar_pendientes():
-    mensajero_nombre = request.form.get('mensajero')
-    fecha_inicio = request.form.get('fecha_inicio')
-    fecha_fin = request.form.get('fecha_fin')
-    query = """
-        SELECT g.remitente, g.numero_guia, g.destinatario, g.direccion, g.ciudad,
-               d.mensajero, d.fecha as fecha_despacho
-        FROM guias g
-        JOIN despachos d ON g.numero_guia = d.numero_guia
-        LEFT JOIN recepciones r ON g.numero_guia = r.numero_guia
-        WHERE r.numero_guia IS NULL AND d.mensajero = %s AND DATE(d.fecha) BETWEEN %s AND %s
-    """
-    df = read_sql_df(query, (mensajero_nombre, fecha_inicio, fecha_fin))
-    filepath = os.path.join(DATA_DIR, f'pendientes_{mensajero_nombre}.xlsx')
-    df.to_excel(filepath, index=False)
-    return send_file(filepath, as_attachment=True)
-
-# =========================
-#   Estado avanzado de guías
-# =========================
-
-@app.route("/consultar_estado_avanzado", methods=["GET", "POST"])
-def consultar_estado_avanzado():
-    resultados = []
+# ---------------------------
+# Registrar mensajero
+# ---------------------------
+@app.route('/registrar_mensajero', methods=['GET', 'POST'])
+def registrar_mensajero():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM zonas")
+    zonas = cur.fetchall()
+    cur.close()
+    conn.close()
     if request.method == 'POST':
-        numeros = request.form.get('numeros', '')
-        lista_numeros = [n.strip() for n in numeros.replace('\n', ',').split(',') if n.strip()]
+        nombre = request.form['nombre']
+        zona_id = request.form['zona']
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO mensajeros (nombre, zona_id) VALUES (%s,%s) ON CONFLICT (nombre) DO NOTHING", (nombre, zona_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+        flash("Mensajero registrado", "success")
+        return redirect(url_for('index'))
+    return render_template('registrar_mensajero.html', zonas=zonas)
+
+# ---------------------------
+# Despachar guías
+# ---------------------------
+@app.route('/despachar_guias', methods=['GET', 'POST'])
+def despachar_guias():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM mensajeros")
+    mensajeros = cur.fetchall()
+    cur.close()
+    conn.close()
+    if request.method == 'POST':
+        mensajero_id = request.form['mensajero']
+        numeros = request.form['numeros']  # números separados por coma
+        lista_numeros = [n.strip() for n in numeros.split(',')]
+        conn = get_conn()
+        cur = conn.cursor()
         for numero in lista_numeros:
-            guia = db_fetchone_dict("SELECT * FROM guias WHERE numero_guia=%s", (numero,))
-            despacho = db_fetchone_dict("SELECT * FROM despachos WHERE numero_guia=%s", (numero,))
-            recepcion = db_fetchone_dict("SELECT * FROM recepciones WHERE numero_guia=%s", (numero,))
-            resultados.append({
-                'numero_guia': numero,
-                'remitente': guia['remitente'] if guia else '',
-                'destinatario': guia['destinatario'] if guia else '',
-                'direccion': guia['direccion'] if guia else '',
-                'ciudad': guia['ciudad'] if guia else '',
-                'mensajero': despacho['mensajero'] if despacho else '',
-                'fecha_despacho': despacho['fecha'] if despacho else '',
-                'estado': recepcion['tipo'] if recepcion else ('DESPACHADA' if despacho else 'EN VERIFICACION'),
-                'motivo': recepcion['motivo'] if recepcion else '',
-                'fecha_gestion': recepcion['fecha'] if recepcion else ''
-            })
-    return render_template('consultar_estado_avanzado.html', resultados=resultados)
+            cur.execute("UPDATE guias SET estado='Despachada', mensajero_id=%s WHERE numero_guia=%s AND estado='Pendiente'", (mensajero_id, numero))
+        conn.commit()
+        cur.close()
+        conn.close()
+        flash("Guías despachadas", "success")
+        return redirect(url_for('index'))
+    return render_template('despachar_guias.html', mensajeros=mensajeros)
 
-@app.route("/exportar_estado_avanzado", methods=["POST"])
-def exportar_estado_avanzado():
-    numeros = request.form.get('numeros', '')
-    lista_numeros = [n.strip() for n in numeros.replace('\n', ',').split(',') if n.strip()]
-    data = []
-    for numero in lista_numeros:
-        guia = db_fetchone_dict("SELECT * FROM guias WHERE numero_guia=%s", (numero,))
-        despacho = db_fetchone_dict("SELECT * FROM despachos WHERE numero_guia=%s", (numero,))
-        recepcion = db_fetchone_dict("SELECT * FROM recepciones WHERE numero_guia=%s", (numero,))
-        data.append({
-            'numero_guia': numero,
-            'remitente': guia['remitente'] if guia else '',
-            'destinatario': guia['destinatario'] if guia else '',
-            'direccion': guia['direccion'] if guia else '',
-            'ciudad': guia['ciudad'] if guia else '',
-            'mensajero': despacho['mensajero'] if despacho else '',
-            'fecha_despacho': despacho['fecha'] if despacho else '',
-            'estado': recepcion['tipo'] if recepcion else ('DESPACHADA' if despacho else 'EN VERIFICACION'),
-            'motivo': recepcion['motivo'] if recepcion else '',
-            'fecha_gestion': recepcion['fecha'] if recepcion else ''
-        })
-    df = pd.DataFrame(data)
-    filepath = os.path.join(DATA_DIR, f'estado_avanzado.xlsx')
-    df.to_excel(filepath, index=False)
-    return send_file(filepath, as_attachment=True)
+# ---------------------------
+# Registrar recepción
+# ---------------------------
+@app.route('/registrar_recepcion', methods=['GET', 'POST'])
+def registrar_recepcion():
+    if request.method == 'POST':
+        numero = request.form['numero']
+        estado = request.form['estado']
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("UPDATE guias SET estado=%s WHERE numero_guia=%s", (estado, numero))
+        conn.commit()
+        cur.close()
+        conn.close()
+        flash("Recepción registrada", "success")
+        return redirect(url_for('index'))
+    return render_template('registrar_recepcion.html')
 
-@app.route("/exportar_recogidas", methods=["POST"])
-def exportar_recogidas():
-    filtro_numero = request.form.get('filtro_numero', '').strip().lower()
-    lista = recogidas
-    if filtro_numero:
-        lista = [r for r in recogidas if filtro_numero in (r['numero_guia'] or '').lower()]
-    df = pd.DataFrame(lista)
-    filepath = os.path.join(DATA_DIR, 'recogidas.xlsx')
-    df.to_excel(filepath, index=False)
-    return send_file(filepath, as_attachment=True)
+# ---------------------------
+# Consultar estado
+# ---------------------------
+@app.route('/consultar_estado', methods=['GET', 'POST'])
+def consultar_estado():
+    guia = None
+    if request.method == 'POST':
+        numero = request.form['numero']
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM guias WHERE numero_guia=%s", (numero,))
+        guia = cur.fetchone()
+        cur.close()
+        conn.close()
+    return render_template('consultar_estado.html', guia=guia)
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+# ---------------------------
+# Liquidación mensajero
+# ---------------------------
+@app.route('/liquidacion')
+def liquidacion():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT m.nombre as mensajero, count(g.id) as total_guias, sum(z.tarifa) as total
+        FROM guias g
+        JOIN mensajeros m ON g.mensajero_id = m.id
+        JOIN zonas z ON m.zona_id = z.id
+        WHERE g.estado='Despachada'
+        GROUP BY m.nombre, z.tarifa
+    """)
+    datos = cur.fetchall()
+    cur.close()
+    conn.close()
+    return render_template('liquidacion.html', datos=datos)
+
+# ---------------------------
+# Registrar recogida
+# ---------------------------
+@app.route('/registrar_recogida', methods=['GET', 'POST'])
+def registrar_recogida():
+    if request.method == 'POST':
+        numero = request.form['numero']
+        fecha = request.form['fecha']
+        observaciones = request.form['observaciones']
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO recogidas (numero_guia, fecha, observaciones) VALUES (%s,%s,%s)", (numero, fecha, observaciones))
+        conn.commit()
+        cur.close()
+        conn.close()
+        flash("Recogida registrada", "success")
+        return redirect(url_for('index'))
+    return render_template('registrar_recogida.html')
+
+# ---------------------------
+# Ver recogidas
+# ---------------------------
+@app.route('/ver_recogidas')
+def ver_recogidas():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM recogidas ORDER BY fecha DESC")
+    datos = cur.fetchall()
+    cur.close()
+    conn.close()
+    return render_template('ver_recogidas.html', datos=datos)
+
+if __name__ == '__main__':
+    app.run(debug=True)
