@@ -16,7 +16,7 @@ from io import BytesIO
 from openpyxl.utils import get_column_letter
 
 app = Flask(__name__)
-app.secret_key = 'secreto'  # si quieres, cámbiala a una var de entorno
+app.secret_key = 'secreto'  # cámbiala a una variable de entorno en producción
 DATA_DIR = 'data'
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -79,7 +79,7 @@ def db_fetchall_dict(sql, params=()):
             return cur.fetchall()
 
 def read_sql_df(sql, params=None):
-    # Pandas con psycopg2: puede lanzar warning, pero funciona bien.
+    # Pandas con psycopg2 puede mostrar un warning, pero funciona correctamente.
     with get_conn() as conn:
         return pd.read_sql(sql, conn, params=params)
 
@@ -88,7 +88,6 @@ def read_sql_df(sql, params=None):
 # =========================
 
 def ensure_schema():
-    # Crea tablas si no existen (tipos compatibles con Postgres)
     db_exec("""
         CREATE TABLE IF NOT EXISTS zonas (
             nombre TEXT PRIMARY KEY,
@@ -159,30 +158,26 @@ recogidas = []
 def cargar_datos_desde_db():
     global zonas, mensajeros, guias, despachos, recepciones, recogidas
 
-    # Zonas
     zrows = db_fetchall_dict("SELECT nombre, tarifa FROM zonas;")
     zonas = [Zona(r["nombre"], r["tarifa"]) for r in zrows]
 
-    # Mensajeros (vincular objeto zona)
     mrows = db_fetchall_dict("SELECT nombre, zona FROM mensajeros;")
     zonas_map = {z.nombre: z for z in zonas}
-    mensajeros = []
+    mensajeros_local = []
     for r in mrows:
         zona_obj = zonas_map.get(r["zona"])
-        mensajeros.append(Mensajero(r["nombre"], zona_obj))
-    globals()["mensajeros"] = mensajeros
+        mensajeros_local.append(Mensajero(r["nombre"], zona_obj))
+    globals()["mensajeros"] = mensajeros_local
 
-    # Guías (DataFrame)
-    guias = read_sql_df("SELECT remitente, numero_guia, destinatario, direccion, ciudad FROM guias;")
-    globals()["guias"] = guias
+    guias_df = read_sql_df("SELECT remitente, numero_guia, destinatario, direccion, ciudad FROM guias;")
+    globals()["guias"] = guias_df
 
-    # Despachos / Recepciones / Recogidas
-    despachos = db_fetchall_dict("SELECT numero_guia, mensajero, zona, fecha FROM despachos ORDER BY fecha DESC;")
-    recepciones = db_fetchall_dict("SELECT numero_guia, tipo, motivo, fecha FROM recepciones ORDER BY fecha DESC;")
-    recogidas = db_fetchall_dict("SELECT numero_guia, fecha, observaciones FROM recogidas ORDER BY fecha DESC;")
-    globals()["despachos"] = despachos
-    globals()["recepciones"] = recepciones
-    globals()["recogidas"] = recogidas
+    despachos_list = db_fetchall_dict("SELECT numero_guia, mensajero, zona, fecha FROM despachos ORDER BY fecha DESC;")
+    recepciones_list = db_fetchall_dict("SELECT numero_guia, tipo, motivo, fecha FROM recepciones ORDER BY fecha DESC;")
+    recogidas_list = db_fetchall_dict("SELECT numero_guia, fecha, observaciones FROM recogidas ORDER BY fecha DESC;")
+    globals()["despachos"] = despachos_list
+    globals()["recepciones"] = recepciones_list
+    globals()["recogidas"] = recogidas_list
 
 # Inicializa
 logging.basicConfig(level=logging.INFO)
@@ -213,7 +208,9 @@ def df_to_excel_download(df: pd.DataFrame, base_name: str, sheet_name: str = "Ho
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         sheet = sheet_name
-        (df if not df.empty else pd.DataFrame(columns=list(df.columns))).to_excel(writer, index=False, sheet_name=sheet)
+        (df if not df.empty else pd.DataFrame(columns=list(df.columns))).to_excel(
+            writer, index=False, sheet_name=sheet
+        )
 
         ws = writer.sheets[sheet]
         # auto width
@@ -351,7 +348,7 @@ def despachar_guias():
                 cur.execute("SELECT * FROM recepciones WHERE numero_guia = %s;", (numero,))
                 recepcion_existente = cur.fetchone()
                 if recepcion_existente:
-                    errores.append(f'Guía {numero} ya fue {recepcion_existente['tipo']}")
+                    errores.append(f"Guía {numero} ya fue {recepcion_existente['tipo']}")
                     continue
                 # ya despachada?
                 cur.execute("SELECT * FROM despachos WHERE numero_guia = %s;", (numero,))
@@ -382,7 +379,6 @@ def despachar_guias():
 
 @app.route("/ver_despacho")
 def ver_despacho():
-    # Filtros opcionales
     numero = (request.args.get('numero_guia') or '').strip().lower()
     mensa = (request.args.get('mensajero') or '').strip().lower()
     fi = (request.args.get('fi') or '').strip()
@@ -440,7 +436,6 @@ def registrar_recepcion():
         motivo = request.form.get('motivo', '')
         fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        # guía existe?
         existe_guia = db_fetchone_dict("SELECT 1 AS x FROM guias WHERE numero_guia = %s;", (numero_guia,))
         if not existe_guia:
             flash('Número de guía no existe en la base (FALTANTE)', 'danger')
@@ -469,7 +464,6 @@ def registrar_recepcion():
 
 @app.route("/ver_recepciones")
 def ver_recepciones():
-    # Filtros: numero, tipo, fi, ff
     numero = (request.args.get('numero_guia') or '').strip().lower()
     tipo = (request.args.get('tipo') or '').strip().upper()  # ENTREGADA/DEVUELTA
     fi = (request.args.get('fi') or '').strip()
@@ -608,11 +602,9 @@ def export_liquidacion():
     fecha_fin = (request.args.get('fecha_fin') or '').strip()
 
     if not mensajero_nombre or not fecha_inicio or not fecha_fin:
-        # devolvemos vacío con headers básicos
         df_empty = pd.DataFrame(columns=["mensajero", "fecha_inicio", "fecha_fin", "cantidad_guias", "tarifa", "total_pagar"])
         return df_to_excel_download(df_empty, base_name="liquidacion", sheet_name="Resumen")
 
-    # detalle
     df_detalle = read_sql_df("""
         SELECT numero_guia, mensajero, zona, fecha
         FROM despachos
@@ -620,7 +612,6 @@ def export_liquidacion():
         ORDER BY fecha DESC
     """, params=[mensajero_nombre, fecha_inicio, fecha_fin])
 
-    # resumen
     cantidad_guias = len(df_detalle)
     mensajero_obj = next((m for m in mensajeros if m.nombre == mensajero_nombre), None)
     tarifa = mensajero_obj.zona.tarifa if mensajero_obj and mensajero_obj.zona else 0
@@ -657,7 +648,6 @@ def export_liquidacion():
         for idx, col in enumerate(df_detalle2.columns, start=1):
             max_len = max([len(str(col))] + [len(str(x)) for x in df_detalle2[col].astype(str).values]) if not df_detalle2.empty else len(str(col))
             ws2.column_dimensions[get_column_letter(idx)].width = max(12, min(40, max_len + 2))
-        # formato fecha si existe
         if "fecha" in df_detalle2.columns:
             col_idx = list(df_detalle2.columns).index("fecha") + 1
             for row in ws2.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx, max_row=ws2.max_row):
@@ -716,12 +706,6 @@ def ver_recogidas():
 
 @app.get("/ver_recogidas/export")
 def export_recogidas():
-    """
-    Exporta a Excel las recogidas, con filtros opcionales:
-    - filtro_numero: cadena que debe aparecer en numero_guia (case-insensitive)
-    - fi: fecha inicio (YYYY-MM-DD) inclusive
-    - ff: fecha fin (YYYY-MM-DD) inclusive
-    """
     filtro_numero = (request.args.get('filtro_numero') or '').strip().lower()
     fi = (request.args.get('fi') or '').strip()
     ff = (request.args.get('ff') or '').strip()
@@ -766,7 +750,6 @@ def health():
 
 @app.route("/init")
 def init():
-    # crea tablas mínimas y prueba insert
     ensure_schema()
     new_id = db_fetchone_dict(
         "INSERT INTO guias(remitente, numero_guia, destinatario, direccion, ciudad) VALUES (%s,%s,%s,%s,%s) ON CONFLICT (numero_guia) DO NOTHING RETURNING numero_guia;",
