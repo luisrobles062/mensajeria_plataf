@@ -8,7 +8,12 @@ import pandas as pd
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extras import RealDictCursor
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import (
+    Flask, render_template, request, redirect, url_for, flash, jsonify,
+    send_file
+)
+from io import BytesIO
+from openpyxl.utils import get_column_letter
 
 app = Flask(__name__)
 app.secret_key = 'secreto'  # si quieres, cámbiala a una var de entorno
@@ -74,6 +79,7 @@ def db_fetchall_dict(sql, params=()):
             return cur.fetchall()
 
 def read_sql_df(sql, params=None):
+    # Pandas con psycopg2: puede lanzar warning, pero funciona bien.
     with get_conn() as conn:
         return pd.read_sql(sql, conn, params=params)
 
@@ -184,6 +190,59 @@ ensure_schema()
 cargar_datos_desde_db()
 
 # =========================
+#   Util: Excel en memoria
+# =========================
+
+def df_to_excel_download(df: pd.DataFrame, base_name: str, sheet_name: str = "Hoja1"):
+    """
+    Retorna un send_file con un Excel generado en memoria.
+    - Auto-anchos de columnas
+    - Formato fecha si aplica
+    """
+    if df is None:
+        df = pd.DataFrame()
+
+    # Normaliza fechas a naive (excel-friendly)
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            try:
+                df[col] = pd.to_datetime(df[col]).dt.tz_localize(None)
+            except Exception:
+                pass
+
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        sheet = sheet_name
+        (df if not df.empty else pd.DataFrame(columns=list(df.columns))).to_excel(writer, index=False, sheet_name=sheet)
+
+        ws = writer.sheets[sheet]
+        # auto width
+        for idx, col in enumerate(df.columns if len(df.columns) else [" "], start=1):
+            if df.empty:
+                max_len = len(str(col))
+            else:
+                max_len = max([len(str(col))] + [len(str(x)) for x in df[col].astype(str).values])
+            ws.column_dimensions[get_column_letter(idx)].width = max(12, min(40, max_len + 2))
+
+        # formato de fecha por nombre de columna típica
+        for name in df.columns:
+            if "fecha" in name.lower():
+                col_idx = list(df.columns).index(name) + 1
+                for row in ws.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx, max_row=ws.max_row):
+                    for cell in row:
+                        cell.number_format = "yyyy-mm-dd hh:mm:ss"
+
+    buffer.seek(0)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{base_name}_{stamp}.xlsx"
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+# =========================
 #          Rutas
 # =========================
 
@@ -292,7 +351,7 @@ def despachar_guias():
                 cur.execute("SELECT * FROM recepciones WHERE numero_guia = %s;", (numero,))
                 recepcion_existente = cur.fetchone()
                 if recepcion_existente:
-                    errores.append(f'Guía {numero} ya fue {recepcion_existente["tipo"]}')
+                    errores.append(f'Guía {numero} ya fue {recepcion_existente['tipo']}")
                     continue
                 # ya despachada?
                 cur.execute("SELECT * FROM despachos WHERE numero_guia = %s;", (numero,))
@@ -319,9 +378,59 @@ def despachar_guias():
                            mensajeros=[m.nombre for m in mensajeros],
                            zonas=[z.nombre for z in zonas])
 
+# ---------- Ver despachos + export ----------
+
 @app.route("/ver_despacho")
 def ver_despacho():
-    return render_template('ver_despacho.html', despachos=despachos)
+    # Filtros opcionales
+    numero = (request.args.get('numero_guia') or '').strip().lower()
+    mensa = (request.args.get('mensajero') or '').strip().lower()
+    fi = (request.args.get('fi') or '').strip()
+    ff = (request.args.get('ff') or '').strip()
+
+    lista = despachos
+    if numero:
+        lista = [r for r in lista if numero in (r['numero_guia'] or '').lower()]
+    if mensa:
+        lista = [r for r in lista if mensa in (r['mensajero'] or '').lower()]
+    if fi:
+        lista = [r for r in lista if str(r['fecha'])[:10] >= fi]
+    if ff:
+        lista = [r for r in lista if str(r['fecha'])[:10] <= ff]
+
+    return render_template('ver_despacho.html', despachos=list(lista))
+
+@app.get("/ver_despacho/export")
+def export_despacho():
+    numero = (request.args.get('numero_guia') or '').strip().lower()
+    mensa = (request.args.get('mensajero') or '').strip().lower()
+    fi = (request.args.get('fi') or '').strip()
+    ff = (request.args.get('ff') or '').strip()
+
+    sql = """
+        SELECT numero_guia, mensajero, zona, fecha
+        FROM despachos
+        WHERE 1=1
+    """
+    params = []
+    if numero:
+        sql += " AND LOWER(COALESCE(numero_guia,'')) LIKE %s"
+        params.append(f"%{numero}%")
+    if mensa:
+        sql += " AND LOWER(COALESCE(mensajero,'')) LIKE %s"
+        params.append(f"%{mensa}%")
+    if fi:
+        sql += " AND DATE(fecha) >= %s"
+        params.append(fi)
+    if ff:
+        sql += " AND DATE(fecha) <= %s"
+        params.append(ff)
+    sql += " ORDER BY fecha DESC"
+
+    df = read_sql_df(sql, params=params)
+    return df_to_excel_download(df, base_name="despachos", sheet_name="Despachos")
+
+# ---------- Registrar / ver recepciones + export ----------
 
 @app.route("/registrar_recepcion", methods=["GET", "POST"])
 def registrar_recepcion():
@@ -357,6 +466,58 @@ def registrar_recepcion():
         return redirect(url_for('registrar_recepcion'))
 
     return render_template('registrar_recepcion.html')
+
+@app.route("/ver_recepciones")
+def ver_recepciones():
+    # Filtros: numero, tipo, fi, ff
+    numero = (request.args.get('numero_guia') or '').strip().lower()
+    tipo = (request.args.get('tipo') or '').strip().upper()  # ENTREGADA/DEVUELTA
+    fi = (request.args.get('fi') or '').strip()
+    ff = (request.args.get('ff') or '').strip()
+
+    lista = recepciones
+    if numero:
+        lista = [r for r in lista if numero in (r['numero_guia'] or '').lower()]
+    if tipo:
+        lista = [r for r in lista if (r['tipo'] or '').upper() == tipo]
+    if fi:
+        lista = [r for r in lista if str(r['fecha'])[:10] >= fi]
+    if ff:
+        lista = [r for r in lista if str(r['fecha'])[:10] <= ff]
+
+    return render_template('ver_recepciones.html', recepciones=list(lista))
+
+@app.get("/ver_recepciones/export")
+def export_recepciones():
+    numero = (request.args.get('numero_guia') or '').strip().lower()
+    tipo = (request.args.get('tipo') or '').strip().upper()
+    fi = (request.args.get('fi') or '').strip()
+    ff = (request.args.get('ff') or '').strip()
+
+    sql = """
+        SELECT numero_guia, tipo, motivo, fecha
+        FROM recepciones
+        WHERE 1=1
+    """
+    params = []
+    if numero:
+        sql += " AND LOWER(COALESCE(numero_guia,'')) LIKE %s"
+        params.append(f"%{numero}%")
+    if tipo:
+        sql += " AND UPPER(COALESCE(tipo,'')) = %s"
+        params.append(tipo)
+    if fi:
+        sql += " AND DATE(fecha) >= %s"
+        params.append(fi)
+    if ff:
+        sql += " AND DATE(fecha) <= %s"
+        params.append(ff)
+    sql += " ORDER BY fecha DESC"
+
+    df = read_sql_df(sql, params=params)
+    return df_to_excel_download(df, base_name="recepciones", sheet_name="Recepciones")
+
+# ---------- Consulta estado ----------
 
 @app.route("/consultar_estado", methods=["GET", "POST"])
 def consultar_estado():
@@ -403,6 +564,8 @@ def consultar_estado():
             }
     return render_template('consultar_estado.html', resultado=resultado)
 
+# ---------- Liquidación + export ----------
+
 @app.route("/liquidacion", methods=["GET", "POST"])
 def liquidacion():
     liquidacion = None
@@ -433,9 +596,85 @@ def liquidacion():
             'fecha_inicio': fecha_inicio,
             'fecha_fin': fecha_fin,
             'cantidad_guias': cantidad_guias,
+            'tarifa': tarifa,
             'total_pagar': total_pagar
         }
     return render_template('liquidacion.html', mensajeros=mensajeros, liquidacion=liquidacion)
+
+@app.get("/liquidacion/export")
+def export_liquidacion():
+    mensajero_nombre = (request.args.get('mensajero') or '').strip()
+    fecha_inicio = (request.args.get('fecha_inicio') or '').strip()
+    fecha_fin = (request.args.get('fecha_fin') or '').strip()
+
+    if not mensajero_nombre or not fecha_inicio or not fecha_fin:
+        # devolvemos vacío con headers básicos
+        df_empty = pd.DataFrame(columns=["mensajero", "fecha_inicio", "fecha_fin", "cantidad_guias", "tarifa", "total_pagar"])
+        return df_to_excel_download(df_empty, base_name="liquidacion", sheet_name="Resumen")
+
+    # detalle
+    df_detalle = read_sql_df("""
+        SELECT numero_guia, mensajero, zona, fecha
+        FROM despachos
+        WHERE mensajero = %s AND DATE(fecha) BETWEEN %s AND %s
+        ORDER BY fecha DESC
+    """, params=[mensajero_nombre, fecha_inicio, fecha_fin])
+
+    # resumen
+    cantidad_guias = len(df_detalle)
+    mensajero_obj = next((m for m in mensajeros if m.nombre == mensajero_nombre), None)
+    tarifa = mensajero_obj.zona.tarifa if mensajero_obj and mensajero_obj.zona else 0
+    total_pagar = cantidad_guias * tarifa
+
+    df_resumen = pd.DataFrame([{
+        "mensajero": mensajero_nombre,
+        "fecha_inicio": fecha_inicio,
+        "fecha_fin": fecha_fin,
+        "cantidad_guias": cantidad_guias,
+        "tarifa": tarifa,
+        "total_pagar": total_pagar
+    }])
+
+    # Excel con dos hojas
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        # Resumen
+        df_resumen.to_excel(writer, index=False, sheet_name="Resumen")
+        ws = writer.sheets["Resumen"]
+        for idx, col in enumerate(df_resumen.columns, start=1):
+            max_len = max([len(str(col))] + [len(str(x)) for x in df_resumen[col].astype(str).values])
+            ws.column_dimensions[get_column_letter(idx)].width = max(12, min(40, max_len + 2))
+        # Detalle
+        df_detalle2 = df_detalle.copy()
+        for col in df_detalle2.columns:
+            if pd.api.types.is_datetime64_any_dtype(df_detalle2[col]):
+                try:
+                    df_detalle2[col] = pd.to_datetime(df_detalle2[col]).dt.tz_localize(None)
+                except Exception:
+                    pass
+        df_detalle2.to_excel(writer, index=False, sheet_name="Detalle")
+        ws2 = writer.sheets["Detalle"]
+        for idx, col in enumerate(df_detalle2.columns, start=1):
+            max_len = max([len(str(col))] + [len(str(x)) for x in df_detalle2[col].astype(str).values]) if not df_detalle2.empty else len(str(col))
+            ws2.column_dimensions[get_column_letter(idx)].width = max(12, min(40, max_len + 2))
+        # formato fecha si existe
+        if "fecha" in df_detalle2.columns:
+            col_idx = list(df_detalle2.columns).index("fecha") + 1
+            for row in ws2.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx, max_row=ws2.max_row):
+                for cell in row:
+                    cell.number_format = "yyyy-mm-dd hh:mm:ss"
+
+    buffer.seek(0)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"liquidacion_{stamp}.xlsx"
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+# ---------- Recogidas + export ----------
 
 @app.route("/registrar_recogida", methods=["GET", "POST"])
 def registrar_recogida():
@@ -461,13 +700,65 @@ def registrar_recogida():
 
 @app.route("/ver_recogidas")
 def ver_recogidas():
-    filtro_numero = request.args.get('filtro_numero', '').strip().lower()
+    filtro_numero = (request.args.get('filtro_numero') or '').strip().lower()
+    fi = (request.args.get('fi') or '').strip()
+    ff = (request.args.get('ff') or '').strip()
+
     lista = recogidas
     if filtro_numero:
-        lista = [r for r in recogidas if filtro_numero in (r['numero_guia'] or '').lower()]
-    return render_template('ver_recogidas.html', recogidas=lista)
+        lista = [r for r in lista if filtro_numero in (r['numero_guia'] or '').lower()]
+    if fi:
+        lista = [r for r in lista if str(r['fecha'])[:10] >= fi]
+    if ff:
+        lista = [r for r in lista if str(r['fecha'])[:10] <= ff]
 
-# Endpoints de verificación rápida (útiles en Render)
+    return render_template('ver_recogidas.html', recogidas=list(lista))
+
+@app.get("/ver_recogidas/export")
+def export_recogidas():
+    """
+    Exporta a Excel las recogidas, con filtros opcionales:
+    - filtro_numero: cadena que debe aparecer en numero_guia (case-insensitive)
+    - fi: fecha inicio (YYYY-MM-DD) inclusive
+    - ff: fecha fin (YYYY-MM-DD) inclusive
+    """
+    filtro_numero = (request.args.get('filtro_numero') or '').strip().lower()
+    fi = (request.args.get('fi') or '').strip()
+    ff = (request.args.get('ff') or '').strip()
+
+    sql = """
+        SELECT
+            id,
+            numero_guia,
+            fecha,
+            observaciones
+        FROM recogidas
+        WHERE 1=1
+    """
+    params = []
+
+    if filtro_numero:
+        sql += " AND LOWER(COALESCE(numero_guia, '')) LIKE %s"
+        params.append(f"%{filtro_numero}%")
+
+    if fi:
+        sql += " AND DATE(fecha) >= %s"
+        params.append(fi)
+
+    if ff:
+        sql += " AND DATE(fecha) <= %s"
+        params.append(ff)
+
+    sql += " ORDER BY fecha DESC"
+
+    df = read_sql_df(sql, params=params)
+    if df.empty:
+        df = pd.DataFrame(columns=["id", "numero_guia", "fecha", "observaciones"])
+
+    return df_to_excel_download(df, base_name="recogidas", sheet_name="Recogidas")
+
+# ---------- Endpoints util ----------
+
 @app.route("/health")
 def health():
     db_fetchone_dict("SELECT 1 AS ok;")
