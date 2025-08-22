@@ -1,72 +1,134 @@
-﻿<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Historial de Recogidas</title>
-  <!-- Bootstrap CSS -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <meta charset="utf-8">
+  <title>Recogidas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root { --bg:#f7f7f9; --card:#ffffff; --text:#222; --muted:#666; --accent:#0d6efd; --border:#e5e7eb; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji","Segoe UI Emoji"; background:var(--bg); color:var(--text); }
+    .container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+    .card-header { padding:16px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+    .title { font-size: 20px; font-weight: 700; }
+    .subtitle { font-size: 13px; color:var(--muted); }
+    .card-body { padding: 16px 20px; }
+    .filters { display:flex; gap:12px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
+    .field { display:flex; flex-direction:column; gap:6px; }
+    label { font-size: 12px; color:var(--muted); }
+    input[type="text"], input[type="date"] {
+      height: 36px; padding: 0 10px; border:1px solid var(--border); border-radius: 8px; background:#fff; min-width: 180px;
+    }
+    .btn { height:36px; padding:0 14px; border:1px solid transparent; border-radius: 8px; background:#f2f3f5; color:#111; cursor:pointer; }
+    .btn.primary { background: var(--accent); color:#fff; }
+    .btn.success { background:#16a34a; color:#fff; }
+    .btn.link { background:transparent; color: var(--accent); border-color:transparent; text-decoration:none; line-height:36px; }
+    .table-wrap { overflow:auto; border:1px solid var(--border); border-radius: 10px; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { padding: 10px 12px; border-bottom:1px solid var(--border); text-align:left; font-size:14px; }
+    th { position:sticky; top:0; background:#fff; z-index:1; }
+    tbody tr:hover { background:#fafafa; }
+    .muted { color:var(--muted); }
+    .nowrap { white-space: nowrap; }
+    .wrap { white-space: normal; word-break: break-word; }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .toolbar { display:flex; align-items:center; justify-content:space-between; gap: 12px; margin-bottom:10px; flex-wrap:wrap; }
+    .pill { font-size:12px; padding:6px 10px; border:1px solid var(--border); border-radius: 999px; background:#fff; }
+  </style>
 </head>
 <body>
-<nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
   <div class="container">
-    <a class="navbar-brand" href="{{ url_for('index') }}">Mensajería App</a>
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-    <div class="collapse navbar-collapse" id="navMenu">
-      <ul class="navbar-nav ms-auto">
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('index') }}">Inicio</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('registrar_recogida') }}">Registrar Recogida</a></li>
-      </ul>
+    <div class="card">
+
+      <div class="card-header">
+        <div>
+          <div class="title">Recogidas</div>
+          <div class="subtitle">Consulta y exporta los registros</div>
+        </div>
+        <div class="actions">
+          <a class="btn link" href="{{ url_for('index') }}">← Volver al inicio</a>
+        </div>
+      </div>
+
+      <div class="card-body">
+        <!-- Filtros -->
+        <form class="filters" method="get" action="{{ url_for('ver_recogidas') }}">
+          <div class="field">
+            <label for="filtro_numero">Número de guía (contiene)</label>
+            <input type="text" id="filtro_numero" name="filtro_numero" value="{{ request.args.get('filtro_numero','') }}" placeholder="Ej: 123, ABC, etc.">
+          </div>
+          <div class="field">
+            <label for="fi">Desde (fecha)</label>
+            <input type="date" id="fi" name="fi" value="{{ request.args.get('fi','') }}">
+          </div>
+          <div class="field">
+            <label for="ff">Hasta (fecha)</label>
+            <input type="date" id="ff" name="ff" value="{{ request.args.get('ff','') }}">
+          </div>
+          <div class="field">
+            <button class="btn primary" type="submit">Aplicar filtros</button>
+          </div>
+          <div class="field">
+            <a class="btn" href="{{ url_for('ver_recogidas') }}">Limpiar</a>
+          </div>
+          <div class="field">
+            <!-- Botón Exportar a Excel (respeta filtros actuales) -->
+            <a
+              class="btn success"
+              href="{{ url_for('export_recogidas',
+                               filtro_numero=request.args.get('filtro_numero',''),
+                               fi=request.args.get('fi',''),
+                               ff=request.args.get('ff','')) }}"
+            >Exportar a Excel</a>
+          </div>
+        </form>
+
+        <!-- Barra superior: totales -->
+        <div class="toolbar">
+          <div class="pill">Total: <strong>{{ (recogidas|length) if recogidas is defined else 0 }}</strong> registros</div>
+          <div class="muted">Los filtros aplicados se conservarán al exportar.</div>
+        </div>
+
+        <!-- Tabla -->
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="nowrap">#</th>
+                <th class="nowrap">Número de guía</th>
+                <th class="nowrap">Fecha</th>
+                <th>Observaciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if recogidas and recogidas|length > 0 %}
+                {% for r in recogidas %}
+                  <tr>
+                    <td class="nowrap">{{ loop.index }}</td>
+                    <td class="nowrap">{{ r.numero_guia or r['numero_guia'] }}</td>
+                    <td class="nowrap">
+                      {% set f = r.fecha if r.fecha is defined else r['fecha'] %}
+                      {% if f and f.__class__.__name__ in ['datetime','Timestamp'] %}
+                        {{ f.strftime('%Y-%m-%d %H:%M:%S') }}
+                      {% else %}
+                        {{ f }}
+                      {% endif %}
+                    </td>
+                    <td class="wrap">{{ r.observaciones or r['observaciones'] }}</td>
+                  </tr>
+                {% endfor %}
+              {% else %}
+                <tr>
+                  <td colspan="4" class="muted">No hay registros para los filtros actuales.</td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+
+      </div>
     </div>
   </div>
-</nav>
-
-<div class="container">
-  <h2 class="mb-4 text-center">Historial de Recogidas</h2>
-
-  <form method="GET" class="mb-4 mx-auto" style="max-width: 400px;">
-    <div class="input-group">
-      <input
-        type="text"
-        class="form-control"
-        name="filtro_numero"
-        placeholder="Filtrar por Número de Guía"
-        value="{{ request.args.get('filtro_numero', '') }}"
-      />
-      <button class="btn btn-primary" type="submit">Filtrar</button>
-      <a href="{{ url_for('ver_recogidas') }}" class="btn btn-secondary">Limpiar</a>
-    </div>
-  </form>
-
-  {% if recogidas %}
-  <div class="table-responsive">
-    <table class="table table-striped table-bordered align-middle">
-      <thead class="table-primary">
-        <tr>
-          <th>Número de Guía</th>
-          <th>Fecha</th>
-          <th>Observaciones</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in recogidas %}
-          <tr>
-            <td>{{ r.numero_guia }}</td>
-            <td>{{ r.fecha }}</td>
-            <td>{{ r.observaciones or '-' }}</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-    <p class="text-center">No hay recogidas para mostrar.</p>
-  {% endif %}
-</div>
-
-<!-- Bootstrap JS y Popper -->
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
