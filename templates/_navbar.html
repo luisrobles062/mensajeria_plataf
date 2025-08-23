@@ -1,0 +1,20 @@
+<div class="nav">
+  <div class="inner">
+    <div class="brand">
+      <span class="dot"></span>
+      <span>Plataforma de Cobros</span>
+      <span class="badge">v1</span>
+    </div>
+    <div class="actions">
+      <a href="{{ url_for('home') }}">Inicio</a>
+      <a href="{{ url_for('pagos_listado') }}">Pagos</a>
+      <a href="{{ url_for('pagos_diario') }}">Recaudo por día</a>
+      <a href="{{ url_for('efectivo') }}">Efectivo</a>
+      <a href="{{ url_for('clientes_archivados') }}">Clientes pagados</a>
+      {% if session.get('auth_ok') %}
+        <span class="badge">{{ session.get('auth_user') }}</span>
+        <a class="logout" href="{{ url_for('logout') }}">Cerrar sesión</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
