@@ -88,6 +88,7 @@ def read_sql_df(sql, params=None):
 # =========================
 
 def ensure_schema():
+    # Zonas / Mensajeros / Guías
     db_exec("""
         CREATE TABLE IF NOT EXISTS zonas (
             nombre TEXT PRIMARY KEY,
@@ -109,6 +110,7 @@ def ensure_schema():
             ciudad      TEXT
         );
     """)
+    # Despachos / Recepciones
     db_exec("""
         CREATE TABLE IF NOT EXISTS despachos (
             numero_guia TEXT PRIMARY KEY,
@@ -125,6 +127,7 @@ def ensure_schema():
             fecha       TIMESTAMPTZ NOT NULL
         );
     """)
+    # Recogidas
     db_exec("""
         CREATE TABLE IF NOT EXISTS recogidas (
             id          SERIAL PRIMARY KEY,
@@ -133,6 +136,31 @@ def ensure_schema():
             observaciones TEXT
         );
     """)
+
+    # ==== NUEVO: Clientes y vínculo con Recogidas ====
+    db_exec("""
+        CREATE TABLE IF NOT EXISTS clientes (
+            id SERIAL PRIMARY KEY,
+            nombre TEXT UNIQUE NOT NULL,
+            telefono TEXT,
+            direccion TEXT,
+            ciudad TEXT,
+            contacto TEXT
+        );
+    """)
+    # Columna cliente_id en recogidas (nullable)
+    db_exec("""
+        ALTER TABLE recogidas
+        ADD COLUMN IF NOT EXISTS cliente_id INTEGER REFERENCES clientes(id);
+    """)
+
+    # Índices útiles
+    db_exec("CREATE INDEX IF NOT EXISTS idx_mensajeros_zona ON mensajeros(zona);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_guias_numero ON guias(numero_guia);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_despachos_fecha ON despachos(fecha);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_recepciones_fecha ON recepciones(fecha);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_recogidas_fecha ON recogidas(fecha);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_recogidas_cliente ON recogidas(cliente_id);")
 
 # =========================
 #   Modelos en memoria
@@ -154,9 +182,10 @@ guias = pd.DataFrame(columns=['remitente', 'numero_guia', 'destinatario', 'direc
 despachos = []
 recepciones = []
 recogidas = []
+clientes = []  # NUEVO: cache liviano para selects
 
 def cargar_datos_desde_db():
-    global zonas, mensajeros, guias, despachos, recepciones, recogidas
+    global zonas, mensajeros, guias, despachos, recepciones, recogidas, clientes
 
     zrows = db_fetchall_dict("SELECT nombre, tarifa FROM zonas;")
     zonas = [Zona(r["nombre"], r["tarifa"]) for r in zrows]
@@ -174,10 +203,14 @@ def cargar_datos_desde_db():
 
     despachos_list = db_fetchall_dict("SELECT numero_guia, mensajero, zona, fecha FROM despachos ORDER BY fecha DESC;")
     recepciones_list = db_fetchall_dict("SELECT numero_guia, tipo, motivo, fecha FROM recepciones ORDER BY fecha DESC;")
-    recogidas_list = db_fetchall_dict("SELECT numero_guia, fecha, observaciones FROM recogidas ORDER BY fecha DESC;")
-    globals()["despachos"] = despachos_list
+    # incluye cliente_id
+    recogidas_list = db_fetchall_dict("SELECT id, numero_guia, fecha, observaciones, cliente_id FROM recogidas ORDER BY fecha DESC;")
+    clientes_list = db_fetchall_dict("SELECT id, nombre, telefono, direccion, ciudad, contacto FROM clientes ORDER BY nombre;")
+
+    globals()["despachos"]  = despachos_list
     globals()["recepciones"] = recepciones_list
-    globals()["recogidas"] = recogidas_list
+    globals()["recogidas"]   = recogidas_list
+    globals()["clientes"]    = clientes_list
 
 # Inicializa
 logging.basicConfig(level=logging.INFO)
@@ -426,6 +459,85 @@ def export_despacho():
     df = read_sql_df(sql, params=params)
     return df_to_excel_download(df, base_name="despachos", sheet_name="Despachos")
 
+# ---------- NUEVO: Pendiente (despachadas sin gestión) + export ----------
+
+@app.route("/pendiente")
+def pendiente():
+    mensa = (request.args.get('mensajero') or '').strip()
+    fi = (request.args.get('fi') or '').strip()
+    ff = (request.args.get('ff') or '').strip()
+
+    # Despachos sin recepción
+    sql = """
+        SELECT
+            d.numero_guia,
+            d.mensajero,
+            d.zona,
+            d.fecha     AS fecha_asignada,
+            g.remitente,
+            g.destinatario,
+            g.direccion,
+            g.ciudad
+        FROM despachos d
+        LEFT JOIN recepciones r ON r.numero_guia = d.numero_guia
+        LEFT JOIN guias g       ON g.numero_guia = d.numero_guia
+        WHERE r.numero_guia IS NULL
+    """
+    params = []
+    if mensa:
+        sql += " AND d.mensajero = %s"
+        params.append(mensa)
+    if fi:
+        sql += " AND DATE(d.fecha) >= %s"
+        params.append(fi)
+    if ff:
+        sql += " AND DATE(d.fecha) <= %s"
+        params.append(ff)
+    sql += " ORDER BY d.fecha DESC"
+
+    rows = db_fetchall_dict(sql, params=params)
+    return render_template("pendiente.html",
+                           rows=rows,
+                           mensajeros=[m.nombre for m in mensajeros],
+                           mensajero_sel=mensa,
+                           fi=fi, ff=ff)
+
+@app.get("/pendiente/export")
+def pendiente_export():
+    mensa = (request.args.get('mensajero') or '').strip()
+    fi = (request.args.get('fi') or '').strip()
+    ff = (request.args.get('ff') or '').strip()
+
+    sql = """
+        SELECT
+            d.numero_guia,
+            d.mensajero,
+            d.zona,
+            d.fecha     AS fecha_asignada,
+            g.remitente,
+            g.destinatario,
+            g.direccion,
+            g.ciudad
+        FROM despachos d
+        LEFT JOIN recepciones r ON r.numero_guia = d.numero_guia
+        LEFT JOIN guias g       ON g.numero_guia = d.numero_guia
+        WHERE r.numero_guia IS NULL
+    """
+    params = []
+    if mensa:
+        sql += " AND d.mensajero = %s"
+        params.append(mensa)
+    if fi:
+        sql += " AND DATE(d.fecha) >= %s"
+        params.append(fi)
+    if ff:
+        sql += " AND DATE(d.fecha) <= %s"
+        params.append(ff)
+    sql += " ORDER BY d.fecha DESC"
+
+    df = read_sql_df(sql, params=params)
+    return df_to_excel_download(df, base_name="pendiente", sheet_name="Pendiente")
+
 # ---------- Registrar / ver recepciones + export ----------
 
 @app.route("/registrar_recepcion", methods=["GET", "POST"])
@@ -570,7 +682,7 @@ def liquidacion():
 
         try:
             datetime.strptime(fecha_inicio, '%Y-%m-%d')
-            datetime.strptime(fecha_fin, '%Y-%m-%d')
+            datetime.strptime(fecha_fin,  '%Y-%m-%d')
         except Exception:
             flash('Formato de fechas inválido', 'danger')
             return redirect(url_for('liquidacion'))
@@ -664,7 +776,37 @@ def export_liquidacion():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-# ---------- Recogidas + export ----------
+# ---------- NUEVO: Clientes (crear/listar) ----------
+
+@app.route("/clientes", methods=["GET", "POST"])
+def clientes_view():
+    if request.method == "POST":
+        nombre = (request.form.get("nombre") or "").strip()
+        telefono = (request.form.get("telefono") or "").strip()
+        direccion = (request.form.get("direccion") or "").strip()
+        ciudad = (request.form.get("ciudad") or "").strip()
+        contacto = (request.form.get("contacto") or "").strip()
+
+        if not nombre:
+            flash("El nombre del cliente es obligatorio.", "danger")
+            return redirect(url_for("clientes_view"))
+
+        ya = db_fetchone_dict("SELECT 1 AS x FROM clientes WHERE LOWER(nombre)=LOWER(%s);", (nombre,))
+        if ya:
+            flash("Ese cliente ya existe.", "warning")
+        else:
+            db_exec("""
+                INSERT INTO clientes(nombre, telefono, direccion, ciudad, contacto)
+                VALUES (%s,%s,%s,%s,%s);
+            """, (nombre, telefono, direccion, ciudad, contacto))
+            flash("Cliente creado.", "success")
+
+        cargar_datos_desde_db()
+        return redirect(url_for("clientes_view"))
+
+    return render_template("clientes.html", clientes=clientes)
+
+# ---------- Recogidas + export (ahora con cliente_id) ----------
 
 @app.route("/registrar_recogida", methods=["GET", "POST"])
 def registrar_recogida():
@@ -672,21 +814,25 @@ def registrar_recogida():
         numero_guia = request.form.get('numero_guia', '').strip()
         fecha = request.form.get('fecha')
         observaciones = request.form.get('observaciones', '').strip()
+        cliente_id = request.form.get('cliente_id')  # puede venir vacío
 
         if not numero_guia or not fecha:
             flash('Debe completar número de guía y fecha', 'danger')
             return redirect(url_for('registrar_recogida'))
 
+        # Normaliza cliente_id
+        cliente_id_val = int(cliente_id) if (cliente_id and cliente_id.isdigit()) else None
+
         db_exec("""
-            INSERT INTO recogidas(numero_guia, fecha, observaciones)
-            VALUES (%s, %s, %s);
-        """, (numero_guia, fecha, observaciones))
+            INSERT INTO recogidas(numero_guia, fecha, observaciones, cliente_id)
+            VALUES (%s, %s, %s, %s);
+        """, (numero_guia, fecha, observaciones, cliente_id_val))
 
         flash(f'Recogida registrada para la guía {numero_guia}', 'success')
         cargar_datos_desde_db()
         return redirect(url_for('registrar_recogida'))
 
-    return render_template('registrar_recogida.html')
+    return render_template('registrar_recogida.html', clientes=clientes)
 
 @app.route("/ver_recogidas")
 def ver_recogidas():
@@ -702,6 +848,12 @@ def ver_recogidas():
     if ff:
         lista = [r for r in lista if str(r['fecha'])[:10] <= ff]
 
+    # Adjunta nombre de cliente si hay
+    id_to_name = {c['id']: c['nombre'] for c in clientes}
+    for r in lista:
+        cid = r.get('cliente_id')
+        r['cliente'] = id_to_name.get(cid) if cid else None
+
     return render_template('ver_recogidas.html', recogidas=list(lista))
 
 @app.get("/ver_recogidas/export")
@@ -712,32 +864,34 @@ def export_recogidas():
 
     sql = """
         SELECT
-            id,
-            numero_guia,
-            fecha,
-            observaciones
-        FROM recogidas
+            r.id,
+            r.numero_guia,
+            r.fecha,
+            r.observaciones,
+            c.nombre AS cliente
+        FROM recogidas r
+        LEFT JOIN clientes c ON c.id = r.cliente_id
         WHERE 1=1
     """
     params = []
 
     if filtro_numero:
-        sql += " AND LOWER(COALESCE(numero_guia, '')) LIKE %s"
+        sql += " AND LOWER(COALESCE(r.numero_guia, '')) LIKE %s"
         params.append(f"%{filtro_numero}%")
 
     if fi:
-        sql += " AND DATE(fecha) >= %s"
+        sql += " AND DATE(r.fecha) >= %s"
         params.append(fi)
 
     if ff:
-        sql += " AND DATE(fecha) <= %s"
+        sql += " AND DATE(r.fecha) <= %s"
         params.append(ff)
 
-    sql += " ORDER BY fecha DESC"
+    sql += " ORDER BY r.fecha DESC"
 
     df = read_sql_df(sql, params=params)
     if df.empty:
-        df = pd.DataFrame(columns=["id", "numero_guia", "fecha", "observaciones"])
+        df = pd.DataFrame(columns=["id", "numero_guia", "fecha", "observaciones", "cliente"])
 
     return df_to_excel_download(df, base_name="recogidas", sheet_name="Recogidas")
 
