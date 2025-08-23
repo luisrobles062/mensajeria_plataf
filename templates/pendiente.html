@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Pendiente (Despachadas sin gestión)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;max-width:1100px;margin:24px auto;padding:0 12px}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .card{border:1px solid #e5e7eb;border-radius:10px;padding:14px}
+    table{border-collapse:collapse;width:100%}
+    th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
+    th{background:#f9fafb}
+    input,select,button{padding:8px;border:1px solid #d1d5db;border-radius:8px}
+    a.button,button{background:#fff;text-decoration:none;cursor:pointer}
+  </style>
+</head>
+<body>
+  <h1 style="margin:0 0 8px">Pendiente (Despachadas sin gestión)</h1>
+
+  <div class="row" style="justify-content:space-between;align-items:flex-end">
+    <form method="get" action="{{ url_for('pendiente') }}" class="card" style="display:flex;gap:8px;flex-wrap:wrap">
+      <div>
+        <label>Mensajero</label><br>
+        <select name="mensajero">
+          <option value="">-- Todos --</option>
+          {% for m in mensajeros %}
+            <option value="{{ m }}" {% if mensajero_sel==m %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Desde</label><br>
+        <input type="date" name="fi" value="{{ fi }}">
+      </div>
+      <div>
+        <label>Hasta</label><br>
+        <input type="date" name="ff" value="{{ ff }}">
+      </div>
+      <div style="align-self:end">
+        <button type="submit">Filtrar</button>
+        <a class="button" href="{{ url_for('pendiente') }}">Quitar filtros</a>
+      </div>
+    </form>
+
+    <div class="card">
+      <a class="button" href="{{ url_for('pendiente_export', mensajero=mensajero_sel, fi=fi, ff=ff) }}">Exportar Excel</a>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    {% if rows and rows|length>0 %}
+      <table>
+        <thead>
+          <tr>
+            <th>Guía</th>
+            <th>Mensajero</th>
+            <th>Zona</th>
+            <th>Fecha asignación</th>
+            <th>Remitente</th>
+            <th>Destinatario</th>
+            <th>Dirección</th>
+            <th>Ciudad</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td>{{ r.numero_guia }}</td>
+            <td>{{ r.mensajero }}</td>
+            <td>{{ r.zona or '—' }}</td>
+            <td>{{ r.fecha_asignada }}</td>
+            <td>{{ r.remitente or '—' }}</td>
+            <td>{{ r.destinatario or '—' }}</td>
+            <td>{{ r.direccion or '—' }}</td>
+            <td>{{ r.ciudad or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>No hay guías pendientes con los filtros actuales.</p>
+    {% endif %}
+  </div>
+</body>
+</html>
