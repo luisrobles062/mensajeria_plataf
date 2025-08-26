@@ -413,52 +413,71 @@ def despachar_guias():
 
 @app.route("/ver_despacho")
 def ver_despacho():
-    numero = (request.args.get('numero_guia') or '').strip().lower()
-    mensa = (request.args.get('mensajero') or '').strip().lower()
-    fi = (request.args.get('fi') or '').strip()
-    ff = (request.args.get('ff') or '').strip()
-
-    lista = despachos
-    if numero:
-        lista = [r for r in lista if numero in (r['numero_guia'] or '').lower()]
-    if mensa:
-        lista = [r for r in lista if mensa in (r['mensajero'] or '').lower()]
-    if fi:
-        lista = [r for r in lista if str(r['fecha'])[:10] >= fi]
-    if ff:
-        lista = [r for r in lista if str(r['fecha'])[:10] <= ff]
-
-    return render_template('ver_despacho.html', despachos=list(lista))
-
-@app.get("/ver_despacho/export")
-def export_despacho():
-    numero = (request.args.get('numero_guia') or '').strip().lower()
-    mensa = (request.args.get('mensajero') or '').strip().lower()
+    mensa = (request.args.get('mensajero') or '').strip()
     fi = (request.args.get('fi') or '').strip()
     ff = (request.args.get('ff') or '').strip()
 
     sql = """
-        SELECT numero_guia, mensajero, zona, fecha
-        FROM despachos
+        SELECT
+            DATE(d.fecha) AS fecha,
+            d.mensajero,
+            d.zona,
+            COUNT(*) AS total_guias
+        FROM despachos d
         WHERE 1=1
     """
     params = []
-    if numero:
-        sql += " AND LOWER(COALESCE(numero_guia,'')) LIKE %s"
-        params.append(f"%{numero}%")
     if mensa:
-        sql += " AND LOWER(COALESCE(mensajero,'')) LIKE %s"
-        params.append(f"%{mensa}%")
+        sql += " AND d.mensajero = %s"
+        params.append(mensa)
     if fi:
-        sql += " AND DATE(fecha) >= %s"
+        sql += " AND DATE(d.fecha) >= %s"
         params.append(fi)
     if ff:
-        sql += " AND DATE(fecha) <= %s"
+        sql += " AND DATE(d.fecha) <= %s"
         params.append(ff)
-    sql += " ORDER BY fecha DESC"
+    sql += " GROUP BY DATE(d.fecha), d.mensajero, d.zona ORDER BY DATE(d.fecha) DESC"
+
+    resumen = db_fetchall_dict(sql, params=params)
+
+    return render_template(
+        'ver_despacho.html',
+        resumen=resumen,
+        mensajeros=[m.nombre for m in mensajeros],
+        mensajero_sel=mensa,
+        fi=fi, ff=ff
+    )
+
+
+@app.get("/ver_despacho/export")
+def export_despacho():
+    mensa = (request.args.get('mensajero') or '').strip()
+    fi = (request.args.get('fi') or '').strip()
+    ff = (request.args.get('ff') or '').strip()
+
+    sql = """
+        SELECT
+            DATE(d.fecha) AS fecha,
+            d.mensajero,
+            d.zona,
+            COUNT(*) AS total_guias
+        FROM despachos d
+        WHERE 1=1
+    """
+    params = []
+    if mensa:
+        sql += " AND d.mensajero = %s"
+        params.append(mensa)
+    if fi:
+        sql += " AND DATE(d.fecha) >= %s"
+        params.append(fi)
+    if ff:
+        sql += " AND DATE(d.fecha) <= %s"
+        params.append(ff)
+    sql += " GROUP BY DATE(d.fecha), d.mensajero, d.zona ORDER BY DATE(d.fecha) DESC"
 
     df = read_sql_df(sql, params=params)
-    return df_to_excel_download(df, base_name="despachos", sheet_name="Despachos")
+    return df_to_excel_download(df, base_name="despachos_resumen", sheet_name="Resumen")
 
 # ---------- NUEVO: Pendiente (despachadas sin gestión) + export ----------
 
