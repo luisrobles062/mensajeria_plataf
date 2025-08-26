@@ -1,78 +1,23 @@
-<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <title>Clientes</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    body{font-family:system-ui,Arial,sans-serif;max-width:1000px;margin:24px auto;padding:0 12px}
-    .row{display:flex;gap:12px;flex-wrap:wrap}
-    .card{border:1px solid #e5e7eb;border-radius:10px;padding:14px}
-    table{border-collapse:collapse;width:100%}
-    th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
-    th{background:#f9fafb}
-    input,button{padding:8px;border:1px solid #d1d5db;border-radius:8px}
-    button{cursor:pointer}
-  </style>
-</head>
-<body>
-  <h1>Clientes</h1>
+<h1>Clientes</h1>
 
-  <div class="card">
-    <form method="post" style="display:grid;gap:8px">
-      <div class="row">
-        <div style="display:grid;gap:6px;flex:1 1 220px">
-          <label>Nombre *</label>
-          <input name="nombre" required placeholder="Empresa / Persona">
-        </div>
-        <div style="display:grid;gap:6px;flex:1 1 220px">
-          <label>Teléfono</label>
-          <input name="telefono" placeholder="+57...">
-        </div>
-        <div style="display:grid;gap:6px;flex:2 1 320px">
-          <label>Dirección</label>
-          <input name="direccion" placeholder="Calle 123 # 4-56">
-        </div>
-        <div style="display:grid;gap:6px;flex:1 1 180px">
-          <label>Ciudad</label>
-          <input name="ciudad" placeholder="Bogotá">
-        </div>
-        <div style="display:grid;gap:6px;flex:1 1 220px">
-          <label>Contacto</label>
-          <input name="contacto" placeholder="Nombre contacto">
-        </div>
-      </div>
-      <div>
-        <button type="submit">Crear cliente</button>
-      </div>
-    </form>
-  </div>
+<form method="post" action="{{ url_for('clientes_view') }}">
+  <label>Nombre del cliente</label>
+  <input type="text" name="nombre" required placeholder="Ej. ACME S.A.S.">
+  <button type="submit">Crear</button>
+</form>
 
-  <div class="card" style="margin-top:12px">
-    <h3 style="margin:0 0 8px">Listado</h3>
-    {% if clientes and clientes|length>0 %}
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th><th>Nombre</th><th>Teléfono</th><th>Dirección</th><th>Ciudad</th><th>Contacto</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for c in clientes %}
-            <tr>
-              <td>{{ c.id }}</td>
-              <td>{{ c.nombre }}</td>
-              <td>{{ c.telefono or '—' }}</td>
-              <td>{{ c.direccion or '—' }}</td>
-              <td>{{ c.ciudad or '—' }}</td>
-              <td>{{ c.contacto or '—' }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <p>No hay clientes creados aún.</p>
-    {% endif %}
-  </div>
-</body>
-</html>
+<hr>
+
+<table border="1" cellpadding="6">
+  <thead>
+    <tr><th>ID</th><th>Nombre</th></tr>
+  </thead>
+  <tbody>
+  {% for c in clientes %}
+    <tr>
+      <td>{{ c.id }}</td>
+      <td>{{ c.nombre }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
