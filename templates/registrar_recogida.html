@@ -2,55 +2,134 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Registrar recogida</title>
+  <title>Registrar Recogida</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body{font-family:system-ui,Arial,sans-serif;max-width:900px;margin:24px auto;padding:0 12px}
-    .card{border:1px solid #e5e7eb;border-radius:10px;padding:14px}
-    .row{display:flex;gap:12px;flex-wrap:wrap}
-    input,select,textarea,button{padding:8px;border:1px solid #d1d5db;border-radius:8px}
-    textarea{width:100%}
-    button{cursor:pointer}
+    :root{
+      --bg:#f7f9fc; --text:#0f172a; --muted:#64748b;
+      --card:#ffffff; --border:#e4e8f1; --shadow:0 6px 20px rgba(15,23,42,.06);
+      --btn:#1a3a8a; --btnHover:#163170; --chip:#eef3ff;
+      --radius:14px;
+    }
+    *{box-sizing:border-box}
+    body{margin:0; background:var(--bg); color:var(--text); font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Inter}
+    .wrap{max-width:960px; margin:auto; padding:28px 18px 56px}
+
+    /* Home button */
+    a.btn-home{display:inline-flex; gap:8px; align-items:center; padding:10px 14px; border:1px solid var(--border);
+      border-radius:12px; color:var(--text); text-decoration:none; background:#fff}
+    a.btn-home:hover{background:#f2f4f8}
+
+    h1{margin:14px 0 6px}
+    .sub{color:var(--muted); font-size:14px}
+
+    /* Cards */
+    .card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:16px; margin-top:16px; box-shadow:var(--shadow)}
+
+    /* Form */
+    label{font-size:14px; color:#344054; display:block; margin-bottom:6px}
+    input[type="text"], input[type="datetime-local"], select, textarea{
+      width:100%; padding:10px 12px; border-radius:10px; border:1px solid #d7dce8; background:#fff; color:var(--text)
+    }
+    textarea{resize:vertical}
+    .grid{display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))}
+    .actions{display:flex; gap:10px; margin-top:12px; flex-wrap:wrap}
+    .btn{padding:10px 14px; border-radius:10px; border:1px solid #d0d7e2; background:var(--chip); color:var(--btn); text-decoration:none; cursor:pointer}
+    .btn.primary{background:var(--btn); color:#fff; border-color:var(--btn)}
+    .btn.primary:hover{background:var(--btnHover); border-color:var(--btnHover)}
+    .btn.secondary{background:#fff}
+
+    /* Details (quick add) */
+    details{margin-top:10px}
+    details summary{cursor:pointer; color:#1f2a8a}
+    .muted{color:var(--muted); font-size:13px}
+
+    /* Flash messages */
+    .flash{border-radius:10px; padding:10px 12px; margin-top:14px; border:1px solid}
+    .flash.success{background:#ecfdf5; color:#065f46; border-color:#a7f3d0}
+    .flash.warning{background:#fffbeb; color:#92400e; border-color:#fde68a}
+    .flash.danger{background:#fef2f2; color:#991b1b; border-color:#fecaca}
+    .flash.info{background:#eff6ff; color:#1e3a8a; border-color:#bfdbfe}
   </style>
 </head>
 <body>
-  <h1>Registrar recogida</h1>
+  <div class="wrap">
+    <a class="btn-home" href="{{ url_for('index') }}">← Inicio</a>
+    <h1>Registrar Recogida</h1>
+    <div class="sub">Agenda una recogida y asóciala al cliente que la solicita.</div>
 
-  <div class="card">
-    <form method="post" style="display:grid;gap:10px">
-      <div class="row">
-        <div style="display:grid;gap:6px;flex:1 1 220px">
-          <label>Número de guía *</label>
-          <input name="numero_guia" required placeholder="Libre (independiente de la base)">
+    <!-- Mensajes flash -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash {{ category }}">{{ message|safe }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <!-- Formulario principal -->
+    <div class="card">
+      <form method="post" action="{{ url_for('registrar_recogida') }}">
+        <div class="grid">
+          <div>
+            <label>Número de guía</label>
+            <input type="text" name="numero_guia" placeholder="Ej. ABC-1234" required>
+          </div>
+          <div>
+            <label>Fecha y hora</label>
+            <input type="datetime-local" name="fecha" required>
+            <div class="muted">Usa la hora local.</div>
+          </div>
+          <div>
+            <label>Cliente</label>
+            <select name="cliente_id">
+              <option value="">— Seleccionar cliente —</option>
+              {% for c in clientes %}
+                <option value="{{ c.id }}">{{ c.nombre }}</option>
+              {% endfor %}
+            </select>
+            <div class="muted">Opcional. Puedes crearlo abajo si no existe.</div>
+          </div>
         </div>
-        <div style="display:grid;gap:6px;flex:1 1 220px">
-          <label>Fecha *</label>
-          <input type="datetime-local" name="fecha" required>
+
+        <div style="margin-top:12px">
+          <label>Observaciones</label>
+          <textarea name="observaciones" rows="3" placeholder="Anota indicaciones, referencias, etc. (opcional)"></textarea>
         </div>
-      </div>
 
-      <div class="row">
-        <div style="display:grid;gap:6px;flex:1 1 320px">
-          <label>Cliente (opcional)</label>
-          <select name="cliente_id">
-            <option value="">-- Sin cliente --</option>
-            {% for c in clientes %}
-              <option value="{{ c.id }}">{{ c.nombre }}</option>
-            {% endfor %}
-          </select>
-          <small>¿No aparece? Crea primero el cliente en <a href="{{ url_for('clientes_view') }}">Clientes</a>.</small>
+        <div class="actions">
+          <button class="btn primary" type="submit">Registrar</button>
+          <button class="btn secondary" type="reset">Limpiar</button>
+          <a class="btn" href="{{ url_for('ver_recogidas') }}">Ver recogidas</a>
+          <a class="btn" href="{{ url_for('clientes_view') }}">Administrar clientes</a>
         </div>
-      </div>
+      </form>
 
-      <div>
-        <label>Observaciones</label>
-        <textarea name="observaciones" rows="3" placeholder="Notas de la recogida..."></textarea>
-      </div>
+      <!-- Alta rápida de cliente (opcional) -->
+      <details>
+        <summary>➕ Agregar cliente rápido</summary>
+        <div class="muted" style="margin:6px 0 10px">Crea un cliente solo con su nombre y recarga esta página para seleccionarlo.</div>
+        <form method="post" action="{{ url_for('clientes_quick') }}">
+          <div class="grid" style="grid-template-columns: 1fr auto">
+            <div>
+              <label>Nombre del cliente</label>
+              <input type="text" name="nombre" placeholder="Ej. ACME S.A.S." required>
+            </div>
+            <div style="align-self:end">
+              <button class="btn primary" type="submit">Crear y recargar</button>
+            </div>
+          </div>
+        </form>
+      </details>
+    </div>
 
-      <div>
-        <button type="submit">Guardar recogida</button>
+    <!-- Tip -->
+    <div class="card" style="background:#fbfdff">
+      <div class="muted">
+        💡 Recuerda: El selector de <strong>Cliente</strong> se llena con los registros de
+        <a href="{{ url_for('clientes_view') }}">Clientes</a>. Si no ves el cliente, créalo con “Agregar cliente rápido” y vuelve a elegirlo.
       </div>
-    </form>
+    </div>
   </div>
 </body>
 </html>
