@@ -8,14 +8,13 @@
     :root{
       --bg:#f7f9fc; --text:#0f172a; --muted:#64748b;
       --card:#ffffff; --border:#e4e8f1; --shadow:0 6px 20px rgba(15,23,42,.06);
-      --btn:#1a3a8a; --btnHover:#163170; --chip:#eef3ff; --danger:#b91c1c;
+      --btn:#1a3a8a; --btnHover:#163170; --chip:#eef3ff;
       --radius:14px;
     }
     *{box-sizing:border-box}
     body{margin:0; background:var(--bg); color:var(--text); font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Inter}
     .wrap{max-width:1100px; margin:auto; padding:28px 18px 56px}
 
-    /* Home button */
     a.btn-home{display:inline-flex; gap:8px; align-items:center; padding:10px 14px; border:1px solid var(--border);
       border-radius:12px; color:var(--text); text-decoration:none; background:#fff}
     a.btn-home:hover{background:#f2f4f8}
@@ -23,10 +22,8 @@
     h1{margin:14px 0 6px}
     .sub{color:var(--muted); font-size:14px}
 
-    /* Cards */
     .card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:16px; margin-top:16px; box-shadow:var(--shadow)}
 
-    /* Form */
     label{font-size:14px; color:#344054; display:block; margin-bottom:6px}
     input[type="text"], input[type="date"], select{
       width:100%; padding:10px 12px; border-radius:10px; border:1px solid #d7dce8; background:#fff; color:var(--text)
@@ -41,13 +38,6 @@
     table{width:100%; border-collapse:collapse; margin-top:12px; font-size:14px}
     th, td{border-bottom:1px solid #e9edf6; padding:9px 8px; text-align:left}
     tbody tr:hover{background:#f2f6ff}
-
-    /* Flash messages (si las usas aquí) */
-    .flash{border-radius:10px; padding:10px 12px; margin-top:14px; border:1px solid}
-    .flash.success{background:#ecfdf5; color:#065f46; border-color:#a7f3d0}
-    .flash.warning{background:#fffbeb; color:#92400e; border-color:#fde68a}
-    .flash.danger{background:#fef2f2; color:#991b1b; border-color:#fecaca}
-    .flash.info{background:#eff6ff; color:#1e3a8a; border-color:#bfdbfe}
   </style>
 </head>
 <body>
@@ -56,7 +46,6 @@
     <h1>Ver Recogidas</h1>
     <div class="sub">Filtra por cliente, fechas y número de guía. Puedes exportar a Excel lo filtrado.</div>
 
-    <!-- Filtros -->
     <div class="card">
       <form method="get" action="{{ url_for('ver_recogidas') }}">
         <div class="grid">
@@ -95,13 +84,12 @@
       </form>
     </div>
 
-    <!-- Tabla -->
     <div class="card">
       <table>
         <thead>
           <tr>
             <th style="width:90px;">ID</th>
-            <th style="width:180px;">Fecha</th>
+            <th style="width:160px;">Fecha</th>
             <th>Número de guía</th>
             <th>Cliente</th>
             <th>Observaciones</th>
@@ -111,7 +99,7 @@
           {% for r in recogidas %}
             <tr>
               <td>{{ r.id }}</td>
-              <td>{{ r.fecha }}</td>
+              <td>{{ r.fecha }}</td>  <!-- ya viene como DATE desde el backend -->
               <td>{{ r.numero_guia }}</td>
               <td>{{ r.cliente or '—' }}</td>
               <td>{{ r.observaciones or '' }}</td>
