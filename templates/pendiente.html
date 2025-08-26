@@ -2,85 +2,92 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Pendiente (Despachadas sin gestión)</title>
+  <title>Pendientes</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body{font-family:system-ui,Arial,sans-serif;max-width:1100px;margin:24px auto;padding:0 12px}
-    .row{display:flex;gap:12px;flex-wrap:wrap}
-    .card{border:1px solid #e5e7eb;border-radius:10px;padding:14px}
-    table{border-collapse:collapse;width:100%}
-    th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
-    th{background:#f9fafb}
-    input,select,button{padding:8px;border:1px solid #d1d5db;border-radius:8px}
-    a.button,button{background:#fff;text-decoration:none;cursor:pointer}
+    :root{
+      --bg:#0f172a; --card:#0b1226; --hover:#111b35; --text:#e5e7eb; --muted:#9aa3b2;
+      --primary:#60a5fa; --border:#1f2a44; --ring:rgba(96,165,250,.45); --radius:14px;
+    }
+    *{box-sizing:border-box} body{margin:0; background:linear-gradient(180deg,#0b1222,#080d1a); color:var(--text); font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Inter}
+    .wrap{max-width:1100px; margin:auto; padding:28px 18px 56px}
+    a.btn-home{display:inline-flex; gap:8px; align-items:center; padding:10px 14px; border:1px solid var(--border);
+      border-radius:12px; color:var(--text); text-decoration:none; background:rgba(96,165,250,.08)}
+    a.btn-home:hover{background:rgba(96,165,250,.16)}
+    h1{margin:14px 0 18px}
+    .card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:16px; margin-top:16px}
+    label{font-size:14px; color:var(--muted)}
+    input, select{width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#0a1122; color:var(--text)}
+    .grid{display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr))}
+    .actions{display:flex; gap:10px; margin-top:10px}
+    .btn{padding:10px 14px; border-radius:12px; border:1px solid var(--border); background:#0e1833; color:var(--text); text-decoration:none}
+    .btn.primary{background:#183059; border-color:#264b7a}
+    table{width:100%; border-collapse:collapse; margin-top:16px; font-size:14px}
+    th, td{border-bottom:1px solid #172446; padding:10px; text-align:left}
+    tr:hover{background:var(--hover)}
+    .hint{color:var(--muted); font-size:13px; margin-top:6px}
   </style>
 </head>
 <body>
-  <h1 style="margin:0 0 8px">Pendiente (Despachadas sin gestión)</h1>
-
-  <div class="row" style="justify-content:space-between;align-items:flex-end">
-    <form method="get" action="{{ url_for('pendiente') }}" class="card" style="display:flex;gap:8px;flex-wrap:wrap">
-      <div>
-        <label>Mensajero</label><br>
-        <select name="mensajero">
-          <option value="">-- Todos --</option>
-          {% for m in mensajeros %}
-            <option value="{{ m }}" {% if mensajero_sel==m %}selected{% endif %}>{{ m }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div>
-        <label>Desde</label><br>
-        <input type="date" name="fi" value="{{ fi }}">
-      </div>
-      <div>
-        <label>Hasta</label><br>
-        <input type="date" name="ff" value="{{ ff }}">
-      </div>
-      <div style="align-self:end">
-        <button type="submit">Filtrar</button>
-        <a class="button" href="{{ url_for('pendiente') }}">Quitar filtros</a>
-      </div>
-    </form>
+  <div class="wrap">
+    <a class="btn-home" href="{{ url_for('index') }}">← Inicio</a>
+    <h1>Despachos pendientes de recepción</h1>
 
     <div class="card">
-      <a class="button" href="{{ url_for('pendiente_export', mensajero=mensajero_sel, fi=fi, ff=ff) }}">Exportar Excel</a>
+      <form method="get" action="{{ url_for('pendiente') }}">
+        <div class="grid">
+          <div>
+            <label>Mensajero</label>
+            <select name="mensajero">
+              <option value="">Todos</option>
+              {% for m in mensajeros %}
+                <option value="{{ m }}" {% if mensajero_sel==m %}selected{% endif %}>{{ m }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>Fecha inicio</label>
+            <input type="date" name="fi" value="{{ fi or '' }}">
+          </div>
+          <div>
+            <label>Fecha fin</label>
+            <input type="date" name="ff" value="{{ ff or '' }}">
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn primary" type="submit">Filtrar</button>
+          <a class="btn" href="{{ url_for('pendiente_export', mensajero=mensajero_sel, fi=fi, ff=ff) }}">Exportar Excel</a>
+        </div>
+        <div class="hint">Muestra guías despachadas que aún no tienen recepción registrada.</div>
+      </form>
     </div>
-  </div>
 
-  <div class="card" style="margin-top:12px">
-    {% if rows and rows|length>0 %}
+    <div class="card">
       <table>
         <thead>
           <tr>
-            <th>Guía</th>
-            <th>Mensajero</th>
-            <th>Zona</th>
-            <th>Fecha asignación</th>
-            <th>Remitente</th>
-            <th>Destinatario</th>
-            <th>Dirección</th>
-            <th>Ciudad</th>
+            <th>Nro Guía</th><th>Mensajero</th><th>Zona</th><th>Fecha asignada</th>
+            <th>Remitente</th><th>Destinatario</th><th>Dirección</th><th>Ciudad</th>
           </tr>
         </thead>
         <tbody>
           {% for r in rows %}
-          <tr>
-            <td>{{ r.numero_guia }}</td>
-            <td>{{ r.mensajero }}</td>
-            <td>{{ r.zona or '—' }}</td>
-            <td>{{ r.fecha_asignada }}</td>
-            <td>{{ r.remitente or '—' }}</td>
-            <td>{{ r.destinatario or '—' }}</td>
-            <td>{{ r.direccion or '—' }}</td>
-            <td>{{ r.ciudad or '—' }}</td>
-          </tr>
+            <tr>
+              <td>{{ r.numero_guia }}</td>
+              <td>{{ r.mensajero }}</td>
+              <td>{{ r.zona }}</td>
+              <td>{{ r.fecha_asignada }}</td>
+              <td>{{ r.remitente }}</td>
+              <td>{{ r.destinatario }}</td>
+              <td>{{ r.direccion }}</td>
+              <td>{{ r.ciudad }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="8">Sin resultados para los filtros aplicados.</td></tr>
           {% endfor %}
         </tbody>
       </table>
-    {% else %}
-      <p>No hay guías pendientes con los filtros actuales.</p>
-    {% endif %}
+    </div>
   </div>
 </body>
 </html>
