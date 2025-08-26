@@ -16,7 +16,8 @@ from io import BytesIO
 from openpyxl.utils import get_column_letter
 
 app = Flask(__name__)
-app.secret_key = 'secreto'  # cámbiala a una variable de entorno en producción
+# Lee SECRET_KEY desde entorno; deja fallback para desarrollo local
+app.secret_key = os.getenv('SECRET_KEY', 'dev-only-change-in-prod')
 DATA_DIR = 'data'
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -182,7 +183,7 @@ guias = pd.DataFrame(columns=['remitente', 'numero_guia', 'destinatario', 'direc
 despachos = []
 recepciones = []
 recogidas = []
-clientes = []  # NUEVO: cache liviano para selects
+clientes = []  # cache liviano para selects
 
 def cargar_datos_desde_db():
     global zonas, mensajeros, guias, despachos, recepciones, recogidas, clientes
@@ -213,7 +214,7 @@ def cargar_datos_desde_db():
     globals()["clientes"]    = clientes_list
 
 # Inicializa
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 ensure_schema()
 cargar_datos_desde_db()
 
@@ -776,16 +777,12 @@ def export_liquidacion():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-# ---------- NUEVO: Clientes (crear/listar) ----------
+# ---------- NUEVO: Clientes (crear/listar: SOLO NOMBRE) ----------
 
 @app.route("/clientes", methods=["GET", "POST"])
 def clientes_view():
     if request.method == "POST":
         nombre = (request.form.get("nombre") or "").strip()
-        telefono = (request.form.get("telefono") or "").strip()
-        direccion = (request.form.get("direccion") or "").strip()
-        ciudad = (request.form.get("ciudad") or "").strip()
-        contacto = (request.form.get("contacto") or "").strip()
 
         if not nombre:
             flash("El nombre del cliente es obligatorio.", "danger")
@@ -795,10 +792,8 @@ def clientes_view():
         if ya:
             flash("Ese cliente ya existe.", "warning")
         else:
-            db_exec("""
-                INSERT INTO clientes(nombre, telefono, direccion, ciudad, contacto)
-                VALUES (%s,%s,%s,%s,%s);
-            """, (nombre, telefono, direccion, ciudad, contacto))
+            # Solo nombre por ahora; los demás campos quedan NULL
+            db_exec("INSERT INTO clientes(nombre) VALUES (%s);", (nombre,))
             flash("Cliente creado.", "success")
 
         cargar_datos_desde_db()
@@ -806,7 +801,7 @@ def clientes_view():
 
     return render_template("clientes.html", clientes=clientes)
 
-# ---------- Recogidas + export (ahora con cliente_id) ----------
+# ---------- Recogidas + export (con cliente_id) ----------
 
 @app.route("/registrar_recogida", methods=["GET", "POST"])
 def registrar_recogida():
@@ -833,6 +828,25 @@ def registrar_recogida():
         return redirect(url_for('registrar_recogida'))
 
     return render_template('registrar_recogida.html', clientes=clientes)
+
+# ---- (Opcional) Alta rápida de cliente desde “Registrar recogida” ----
+
+@app.post("/clientes_quick")
+def clientes_quick():
+    nombre = (request.form.get("nombre") or "").strip()
+    if not nombre:
+        flash("El nombre del cliente es obligatorio.", "danger")
+        return redirect(url_for("registrar_recogida"))
+
+    ya = db_fetchone_dict("SELECT 1 AS x FROM clientes WHERE LOWER(nombre)=LOWER(%s);", (nombre,))
+    if ya:
+        flash("Ese cliente ya existe.", "warning")
+    else:
+        db_exec("INSERT INTO clientes(nombre) VALUES (%s);", (nombre,))
+        flash("Cliente creado.", "success")
+
+    cargar_datos_desde_db()
+    return redirect(url_for("registrar_recogida"))
 
 @app.route("/ver_recogidas")
 def ver_recogidas():
