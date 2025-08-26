@@ -872,28 +872,59 @@ def ver_recogidas():
     filtro_numero = (request.args.get('filtro_numero') or '').strip().lower()
     fi = (request.args.get('fi') or '').strip()
     ff = (request.args.get('ff') or '').strip()
+    cliente_id = (request.args.get('cliente_id') or '').strip()
 
-    lista = recogidas
+    # Traemos ya unido con clientes y aplicamos filtros en SQL
+    sql = """
+        SELECT
+            r.id,
+            r.numero_guia,
+            r.fecha,
+            r.observaciones,
+            r.cliente_id,
+            c.nombre AS cliente
+        FROM recogidas r
+        LEFT JOIN clientes c ON c.id = r.cliente_id
+        WHERE 1=1
+    """
+    params = []
+
     if filtro_numero:
-        lista = [r for r in lista if filtro_numero in (r['numero_guia'] or '').lower()]
+        sql += " AND LOWER(COALESCE(r.numero_guia,'')) LIKE %s"
+        params.append(f"%{filtro_numero}%")
+
     if fi:
-        lista = [r for r in lista if str(r['fecha'])[:10] >= fi]
+        sql += " AND DATE(r.fecha) >= %s"
+        params.append(fi)
+
     if ff:
-        lista = [r for r in lista if str(r['fecha'])[:10] <= ff]
+        sql += " AND DATE(r.fecha) <= %s"
+        params.append(ff)
 
-    # Adjunta nombre de cliente si hay
-    id_to_name = {c['id']: c['nombre'] for c in clientes}
-    for r in lista:
-        cid = r.get('cliente_id')
-        r['cliente'] = id_to_name.get(cid) if cid else None
+    if cliente_id and cliente_id.isdigit():
+        sql += " AND r.cliente_id = %s"
+        params.append(int(cliente_id))
 
-    return render_template('ver_recogidas.html', recogidas=list(lista))
+    sql += " ORDER BY r.fecha DESC"
+
+    rows = db_fetchall_dict(sql, params=params)
+
+    return render_template(
+        'ver_recogidas.html',
+        recogidas=rows,
+        clientes=clientes,          # para el select
+        cliente_sel=cliente_id,     # para mantener selección
+        fi=fi, ff=ff,
+        filtro_numero=(request.args.get('filtro_numero') or '').strip()
+    )
+
 
 @app.get("/ver_recogidas/export")
 def export_recogidas():
     filtro_numero = (request.args.get('filtro_numero') or '').strip().lower()
     fi = (request.args.get('fi') or '').strip()
     ff = (request.args.get('ff') or '').strip()
+    cliente_id = (request.args.get('cliente_id') or '').strip()
 
     sql = """
         SELECT
@@ -919,6 +950,10 @@ def export_recogidas():
     if ff:
         sql += " AND DATE(r.fecha) <= %s"
         params.append(ff)
+
+    if cliente_id and cliente_id.isdigit():
+        sql += " AND r.cliente_id = %s"
+        params.append(int(cliente_id))
 
     sql += " ORDER BY r.fecha DESC"
 
