@@ -16,8 +16,7 @@ from io import BytesIO
 from openpyxl.utils import get_column_letter
 
 app = Flask(__name__)
-# Lee SECRET_KEY desde entorno; deja fallback para desarrollo local
-app.secret_key = os.getenv('SECRET_KEY', 'dev-only-change-in-prod')
+app.secret_key = 'secreto'  # cámbiala a una variable de entorno en producción
 DATA_DIR = 'data'
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -204,7 +203,6 @@ def cargar_datos_desde_db():
 
     despachos_list = db_fetchall_dict("SELECT numero_guia, mensajero, zona, fecha FROM despachos ORDER BY fecha DESC;")
     recepciones_list = db_fetchall_dict("SELECT numero_guia, tipo, motivo, fecha FROM recepciones ORDER BY fecha DESC;")
-    # incluye cliente_id
     recogidas_list = db_fetchall_dict("SELECT id, numero_guia, fecha, observaciones, cliente_id FROM recogidas ORDER BY fecha DESC;")
     clientes_list = db_fetchall_dict("SELECT id, nombre, telefono, direccion, ciudad, contacto FROM clientes ORDER BY nombre;")
 
@@ -214,7 +212,7 @@ def cargar_datos_desde_db():
     globals()["clientes"]    = clientes_list
 
 # Inicializa
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
+logging.basicConfig(level=logging.INFO)
 ensure_schema()
 cargar_datos_desde_db()
 
@@ -222,11 +220,11 @@ cargar_datos_desde_db()
 #   Util: Excel en memoria
 # =========================
 
-def df_to_excel_download(df: pd.DataFrame, base_name: str, sheet_name: str = "Hoja1"):
+def df_to_excel_download(df: pd.DataFrame, base_name: str, sheet_name: str = "Hoja1", date_format: str | None = None):
     """
     Retorna un send_file con un Excel generado en memoria.
     - Auto-anchos de columnas
-    - Formato fecha si aplica
+    - Formato de fecha configurable (por defecto: 'yyyy-mm-dd hh:mm:ss')
     """
     if df is None:
         df = pd.DataFrame()
@@ -256,12 +254,13 @@ def df_to_excel_download(df: pd.DataFrame, base_name: str, sheet_name: str = "Ho
             ws.column_dimensions[get_column_letter(idx)].width = max(12, min(40, max_len + 2))
 
         # formato de fecha por nombre de columna típica
+        fmt = date_format if date_format else "yyyy-mm-dd hh:mm:ss"
         for name in df.columns:
             if "fecha" in name.lower():
                 col_idx = list(df.columns).index(name) + 1
                 for row in ws.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx, max_row=ws.max_row):
                     for cell in row:
-                        cell.number_format = "yyyy-mm-dd hh:mm:ss"
+                        cell.number_format = fmt
 
     buffer.seek(0)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -409,7 +408,7 @@ def despachar_guias():
                            mensajeros=[m.nombre for m in mensajeros],
                            zonas=[z.nombre for z in zonas])
 
-# ---------- Ver despachos + export ----------
+# ---------- Ver despachos (RESUMEN) + export ----------
 
 @app.route("/ver_despacho")
 def ver_despacho():
@@ -477,9 +476,9 @@ def export_despacho():
     sql += " GROUP BY DATE(d.fecha), d.mensajero, d.zona ORDER BY DATE(d.fecha) DESC"
 
     df = read_sql_df(sql, params=params)
-    return df_to_excel_download(df, base_name="despachos_resumen", sheet_name="Resumen")
+    return df_to_excel_download(df, base_name="despachos_resumen", sheet_name="Resumen", date_format="yyyy-mm-dd")
 
-# ---------- NUEVO: Pendiente (despachadas sin gestión) + export ----------
+# ---------- PENDIENTE + export (UI en template) ----------
 
 @app.route("/pendiente")
 def pendiente():
@@ -556,7 +555,7 @@ def pendiente_export():
     sql += " ORDER BY d.fecha DESC"
 
     df = read_sql_df(sql, params=params)
-    return df_to_excel_download(df, base_name="pendiente", sheet_name="Pendiente")
+    return df_to_excel_download(df, base_name="pendiente", sheet_name="Pendiente", date_format="yyyy-mm-dd")
 
 # ---------- Registrar / ver recepciones + export ----------
 
@@ -641,7 +640,7 @@ def export_recepciones():
     sql += " ORDER BY fecha DESC"
 
     df = read_sql_df(sql, params=params)
-    return df_to_excel_download(df, base_name="recepciones", sheet_name="Recepciones")
+    return df_to_excel_download(df, base_name="recepciones", sheet_name="Recepciones", date_format="yyyy-mm-dd")
 
 # ---------- Consulta estado ----------
 
@@ -735,7 +734,7 @@ def export_liquidacion():
 
     if not mensajero_nombre or not fecha_inicio or not fecha_fin:
         df_empty = pd.DataFrame(columns=["mensajero", "fecha_inicio", "fecha_fin", "cantidad_guias", "tarifa", "total_pagar"])
-        return df_to_excel_download(df_empty, base_name="liquidacion", sheet_name="Resumen")
+        return df_to_excel_download(df_empty, base_name="liquidacion", sheet_name="Resumen", date_format="yyyy-mm-dd")
 
     df_detalle = read_sql_df("""
         SELECT numero_guia, mensajero, zona, fecha
@@ -758,7 +757,6 @@ def export_liquidacion():
         "total_pagar": total_pagar
     }])
 
-    # Excel con dos hojas
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         # Resumen
@@ -784,7 +782,7 @@ def export_liquidacion():
             col_idx = list(df_detalle2.columns).index("fecha") + 1
             for row in ws2.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx, max_row=ws2.max_row):
                 for cell in row:
-                    cell.number_format = "yyyy-mm-dd hh:mm:ss"
+                    cell.number_format = "yyyy-mm-dd"
 
     buffer.seek(0)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -796,12 +794,16 @@ def export_liquidacion():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-# ---------- NUEVO: Clientes (crear/listar: SOLO NOMBRE) ----------
+# ---------- NUEVO: Clientes (crear/listar) ----------
 
 @app.route("/clientes", methods=["GET", "POST"])
 def clientes_view():
     if request.method == "POST":
         nombre = (request.form.get("nombre") or "").strip()
+        telefono = (request.form.get("telefono") or "").strip()
+        direccion = (request.form.get("direccion") or "").strip()
+        ciudad = (request.form.get("ciudad") or "").strip()
+        contacto = (request.form.get("contacto") or "").strip()
 
         if not nombre:
             flash("El nombre del cliente es obligatorio.", "danger")
@@ -811,8 +813,10 @@ def clientes_view():
         if ya:
             flash("Ese cliente ya existe.", "warning")
         else:
-            # Solo nombre por ahora; los demás campos quedan NULL
-            db_exec("INSERT INTO clientes(nombre) VALUES (%s);", (nombre,))
+            db_exec("""
+                INSERT INTO clientes(nombre, telefono, direccion, ciudad, contacto)
+                VALUES (%s,%s,%s,%s,%s);
+            """, (nombre, telefono, direccion, ciudad, contacto))
             flash("Cliente creado.", "success")
 
         cargar_datos_desde_db()
@@ -820,52 +824,49 @@ def clientes_view():
 
     return render_template("clientes.html", clientes=clientes)
 
-# ---------- Recogidas + export (con cliente_id) ----------
-
-@app.route("/registrar_recogida", methods=["GET", "POST"])
-def registrar_recogida():
-    if request.method == 'POST':
-        numero_guia = request.form.get('numero_guia', '').strip()
-        fecha = request.form.get('fecha')
-        observaciones = request.form.get('observaciones', '').strip()
-        cliente_id = request.form.get('cliente_id')  # puede venir vacío
-
-        if not numero_guia or not fecha:
-            flash('Debe completar número de guía y fecha', 'danger')
-            return redirect(url_for('registrar_recogida'))
-
-        # Normaliza cliente_id
-        cliente_id_val = int(cliente_id) if (cliente_id and cliente_id.isdigit()) else None
-
-        db_exec("""
-            INSERT INTO recogidas(numero_guia, fecha, observaciones, cliente_id)
-            VALUES (%s, %s, %s, %s);
-        """, (numero_guia, fecha, observaciones, cliente_id_val))
-
-        flash(f'Recogida registrada para la guía {numero_guia}', 'success')
-        cargar_datos_desde_db()
-        return redirect(url_for('registrar_recogida'))
-
-    return render_template('registrar_recogida.html', clientes=clientes)
-
-# ---- (Opcional) Alta rápida de cliente desde “Registrar recogida” ----
-
+# ---- Alta rápida desde Registrar Recogida ----
 @app.post("/clientes_quick")
 def clientes_quick():
     nombre = (request.form.get("nombre") or "").strip()
     if not nombre:
         flash("El nombre del cliente es obligatorio.", "danger")
         return redirect(url_for("registrar_recogida"))
-
     ya = db_fetchone_dict("SELECT 1 AS x FROM clientes WHERE LOWER(nombre)=LOWER(%s);", (nombre,))
     if ya:
         flash("Ese cliente ya existe.", "warning")
     else:
         db_exec("INSERT INTO clientes(nombre) VALUES (%s);", (nombre,))
         flash("Cliente creado.", "success")
-
     cargar_datos_desde_db()
     return redirect(url_for("registrar_recogida"))
+
+# ---------- Recogidas + export (SOLO FECHA) ----------
+
+@app.route("/registrar_recogida", methods=["GET", "POST"])
+def registrar_recogida():
+    if request.method == 'POST':
+        numero_guia = (request.form.get('numero_guia') or '').strip()
+        fecha_raw = (request.form.get('fecha') or '').strip()  # 'YYYY-MM-DD'
+        observaciones = (request.form.get('observaciones') or '').strip()
+        cliente_id = request.form.get('cliente_id')  # puede venir vacío
+
+        if not numero_guia or not fecha_raw:
+            flash('Debe completar número de guía y fecha', 'danger')
+            return redirect(url_for('registrar_recogida'))
+
+        cliente_id_val = int(cliente_id) if (cliente_id and cliente_id.isdigit()) else None
+
+        # Guardamos como DATE (sin hora). La columna es TIMESTAMPTZ, Postgres castea, y siempre mostraremos DATE.
+        db_exec("""
+            INSERT INTO recogidas(numero_guia, fecha, observaciones, cliente_id)
+            VALUES (%s, %s::date, %s, %s);
+        """, (numero_guia, fecha_raw, observaciones, cliente_id_val))
+
+        flash(f'Recogida registrada para la guía {numero_guia}', 'success')
+        cargar_datos_desde_db()
+        return redirect(url_for('registrar_recogida'))
+
+    return render_template('registrar_recogida.html', clientes=clientes)
 
 @app.route("/ver_recogidas")
 def ver_recogidas():
@@ -874,12 +875,11 @@ def ver_recogidas():
     ff = (request.args.get('ff') or '').strip()
     cliente_id = (request.args.get('cliente_id') or '').strip()
 
-    # Traemos ya unido con clientes y aplicamos filtros en SQL
     sql = """
         SELECT
             r.id,
             r.numero_guia,
-            r.fecha,
+            DATE(r.fecha) AS fecha,     -- solo fecha
             r.observaciones,
             r.cliente_id,
             c.nombre AS cliente
@@ -905,7 +905,7 @@ def ver_recogidas():
         sql += " AND r.cliente_id = %s"
         params.append(int(cliente_id))
 
-    sql += " ORDER BY r.fecha DESC"
+    sql += " ORDER BY DATE(r.fecha) DESC, r.id DESC"
 
     rows = db_fetchall_dict(sql, params=params)
 
@@ -918,7 +918,6 @@ def ver_recogidas():
         filtro_numero=(request.args.get('filtro_numero') or '').strip()
     )
 
-
 @app.get("/ver_recogidas/export")
 def export_recogidas():
     filtro_numero = (request.args.get('filtro_numero') or '').strip().lower()
@@ -930,7 +929,7 @@ def export_recogidas():
         SELECT
             r.id,
             r.numero_guia,
-            r.fecha,
+            DATE(r.fecha) AS fecha,     -- solo fecha
             r.observaciones,
             c.nombre AS cliente
         FROM recogidas r
@@ -955,13 +954,14 @@ def export_recogidas():
         sql += " AND r.cliente_id = %s"
         params.append(int(cliente_id))
 
-    sql += " ORDER BY r.fecha DESC"
+    sql += " ORDER BY DATE(r.fecha) DESC, r.id DESC"
 
     df = read_sql_df(sql, params=params)
     if df.empty:
         df = pd.DataFrame(columns=["id", "numero_guia", "fecha", "observaciones", "cliente"])
 
-    return df_to_excel_download(df, base_name="recogidas", sheet_name="Recogidas")
+    # Fuerza formato de fecha sin hora en el Excel
+    return df_to_excel_download(df, base_name="recogidas", sheet_name="Recogidas", date_format="yyyy-mm-dd")
 
 # ---------- Endpoints util ----------
 
