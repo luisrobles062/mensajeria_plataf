@@ -2,137 +2,83 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Despachos</title>
+  <title>Resumen de Despachos</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    :root { --bg:#f7f7f9; --card:#ffffff; --text:#222; --muted:#666; --accent:#0d6efd; --border:#e5e7eb; }
-    * { box-sizing: border-box; }
-    body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji","Segoe UI Emoji"; background:var(--bg); color:var(--text); }
-    .container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
-    .card { background:var(--card); border:1px solid var(--border); border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
-    .card-header { padding:16px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
-    .title { font-size: 20px; font-weight: 700; }
-    .subtitle { font-size: 13px; color:var(--muted); }
-    .card-body { padding: 16px 20px; }
-    .filters { display:flex; gap:12px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
-    .field { display:flex; flex-direction:column; gap:6px; }
-    label { font-size: 12px; color:var(--muted); }
-    input[type="text"], input[type="date"] {
-      height: 36px; padding: 0 10px; border:1px solid var(--border); border-radius: 8px; background:#fff; min-width: 180px;
-    }
-    .btn { height:36px; padding:0 14px; border:1px solid transparent; border-radius: 8px; background:#f2f3f5; color:#111; cursor:pointer; }
-    .btn.primary { background: var(--accent); color:#fff; }
-    .btn.success { background:#16a34a; color:#fff; }
-    .btn.link { background:transparent; color: var(--accent); border-color:transparent; text-decoration:none; line-height:36px; }
-    .table-wrap { overflow:auto; border:1px solid var(--border); border-radius: 10px; }
-    table { width:100%; border-collapse: collapse; }
-    th, td { padding: 10px 12px; border-bottom:1px solid var(--border); text-align:left; font-size:14px; }
-    th { position:sticky; top:0; background:#fff; z-index:1; }
-    tbody tr:hover { background:#fafafa; }
-    .muted { color:var(--muted); }
-    .nowrap { white-space: nowrap; }
-    .wrap { white-space: normal; word-break: break-word; }
-    .toolbar { display:flex; align-items:center; justify-content:space-between; gap: 12px; margin-bottom:10px; flex-wrap:wrap; }
-    .pill { font-size:12px; padding:6px 10px; border:1px solid var(--border); border-radius: 999px; background:#fff; }
+    body{font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Inter; margin:0; background:#f7f9fc; color:#111}
+    .wrap{max-width:1000px; margin:auto; padding:28px 18px 56px}
+    a.btn-home{display:inline-flex; gap:8px; align-items:center; padding:10px 14px; border:1px solid #d0d7e2;
+      border-radius:12px; color:#111; text-decoration:none; background:white}
+    a.btn-home:hover{background:#f2f4f8}
+    h1{margin:14px 0 18px}
+    .card{background:#fff; border:1px solid #e4e8f1; border-radius:12px; padding:16px; margin-top:16px}
+    label{font-size:14px; color:#445}
+    input, select{width:100%; padding:10px 12px; border-radius:10px; border:1px solid #d7dce8; background:#fff; color:#111}
+    .grid{display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr))}
+    .actions{display:flex; gap:10px; margin-top:10px}
+    .btn{padding:10px 14px; border-radius:10px; border:1px solid #d0d7e2; background:#eef3ff; color:#1a3a8a; text-decoration:none}
+    .btn.primary{background:#1a3a8a; color:#fff; border-color:#1a3a8a}
+    table{width:100%; border-collapse:collapse; margin-top:12px}
+    th, td{border-bottom:1px solid #e9edf6; padding:8px; text-align:left}
+    tbody tr:hover{background:#f2f6ff}
   </style>
 </head>
 <body>
-  <div class="container">
+  <div class="wrap">
+    <a class="btn-home" href="{{ url_for('index') }}">← Inicio</a>
+    <h1>Resumen de Despachos</h1>
+
     <div class="card">
-
-      <div class="card-header">
-        <div>
-          <div class="title">Despachos</div>
-          <div class="subtitle">Consulta y exporta los registros</div>
+      <form method="get" action="{{ url_for('ver_despacho') }}">
+        <div class="grid">
+          <div>
+            <label>Mensajero</label>
+            <select name="mensajero">
+              <option value="">Todos</option>
+              {% for m in mensajeros %}
+                <option value="{{ m }}" {% if mensajero_sel==m %}selected{% endif %}>{{ m }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>Fecha inicio</label>
+            <input type="date" name="fi" value="{{ fi or '' }}">
+          </div>
+          <div>
+            <label>Fecha fin</label>
+            <input type="date" name="ff" value="{{ ff or '' }}">
+          </div>
         </div>
-        <div>
-          <a class="btn link" href="{{ url_for('index') }}">← Volver al inicio</a>
+        <div class="actions">
+          <button class="btn primary" type="submit">Aplicar filtros</button>
+          <a class="btn" href="{{ url_for('ver_despacho_export', mensajero=mensajero_sel, fi=fi, ff=ff) if false else url_for('export_despacho', mensajero=mensajero_sel, fi=fi, ff=ff) }}">Exportar Excel</a>
         </div>
-      </div>
+      </form>
+    </div>
 
-      <div class="card-body">
-        <!-- Filtros -->
-        <form class="filters" method="get" action="{{ url_for('ver_despacho') }}">
-          <div class="field">
-            <label for="numero_guia">Número de guía (contiene)</label>
-            <input type="text" id="numero_guia" name="numero_guia" value="{{ request.args.get('numero_guia','') }}" placeholder="Ej: 123, ABC, etc.">
-          </div>
-          <div class="field">
-            <label for="mensajero">Mensajero (contiene)</label>
-            <input type="text" id="mensajero" name="mensajero" value="{{ request.args.get('mensajero','') }}" placeholder="Nombre mensajero">
-          </div>
-          <div class="field">
-            <label for="fi">Desde (fecha)</label>
-            <input type="date" id="fi" name="fi" value="{{ request.args.get('fi','') }}">
-          </div>
-          <div class="field">
-            <label for="ff">Hasta (fecha)</label>
-            <input type="date" id="ff" name="ff" value="{{ request.args.get('ff','') }}">
-          </div>
-          <div class="field">
-            <button class="btn primary" type="submit">Aplicar filtros</button>
-          </div>
-          <div class="field">
-            <a class="btn" href="{{ url_for('ver_despacho') }}">Limpiar</a>
-          </div>
-          <div class="field">
-            <a
-              class="btn success"
-              href="{{ url_for('export_despacho',
-                               numero_guia=request.args.get('numero_guia',''),
-                               mensajero=request.args.get('mensajero',''),
-                               fi=request.args.get('fi',''),
-                               ff=request.args.get('ff','')) }}"
-            >Exportar a Excel</a>
-          </div>
-        </form>
-
-        <!-- Barra superior -->
-        <div class="toolbar">
-          <div class="pill">Total: <strong>{{ (despachos|length) if despachos is defined else 0 }}</strong> registros</div>
-          <div class="muted">Los filtros aplicados se conservarán al exportar.</div>
-        </div>
-
-        <!-- Tabla -->
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th class="nowrap">#</th>
-                <th class="nowrap">Número de guía</th>
-                <th class="nowrap">Mensajero</th>
-                <th class="nowrap">Zona</th>
-                <th class="nowrap">Fecha</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% if despachos and despachos|length > 0 %}
-                {% for r in despachos %}
-                  <tr>
-                    <td class="nowrap">{{ loop.index }}</td>
-                    <td class="nowrap">{{ r.numero_guia or r['numero_guia'] }}</td>
-                    <td class="nowrap">{{ r.mensajero or r['mensajero'] }}</td>
-                    <td class="nowrap">{{ r.zona or r['zona'] }}</td>
-                    <td class="nowrap">
-                      {% set f = r.fecha if r.fecha is defined else r['fecha'] %}
-                      {% if f and f.__class__.__name__ in ['datetime','Timestamp'] %}
-                        {{ f.strftime('%Y-%m-%d %H:%M:%S') }}
-                      {% else %}
-                        {{ f }}
-                      {% endif %}
-                    </td>
-                  </tr>
-                {% endfor %}
-              {% else %}
-                <tr>
-                  <td colspan="5" class="muted">No hay registros para los filtros actuales.</td>
-                </tr>
-              {% endif %}
-            </tbody>
-          </table>
-        </div>
-
-      </div>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Mensajero</th>
+            <th>Ruta (Zona)</th>
+            <th>Total de guías</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in resumen %}
+            <tr>
+              <td>{{ r.fecha }}</td>
+              <td>{{ r.mensajero }}</td>
+              <td>{{ r.zona }}</td>
+              <td>{{ r.total_guias }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4">Sin resultados para los filtros aplicados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
 </body>
