@@ -17,6 +17,10 @@ from openpyxl.utils import get_column_letter
 
 app = Flask(__name__)
 app.secret_key = 'secreto'  # cámbiala a una variable de entorno en producción
+# Evita cacheo de plantillas en despliegues largos
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.jinja_env.auto_reload = True
+
 DATA_DIR = 'data'
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -79,7 +83,6 @@ def db_fetchall_dict(sql, params=()):
             return cur.fetchall()
 
 def read_sql_df(sql, params=None):
-    # Pandas con psycopg2 puede mostrar un warning, pero funciona correctamente.
     with get_conn() as conn:
         return pd.read_sql(sql, conn, params=params)
 
@@ -137,7 +140,7 @@ def ensure_schema():
         );
     """)
 
-    # ==== NUEVO: Clientes y vínculo con Recogidas ====
+    # Clientes y vínculo con Recogidas
     db_exec("""
         CREATE TABLE IF NOT EXISTS clientes (
             id SERIAL PRIMARY KEY,
@@ -148,7 +151,6 @@ def ensure_schema():
             contacto TEXT
         );
     """)
-    # Columna cliente_id en recogidas (nullable)
     db_exec("""
         ALTER TABLE recogidas
         ADD COLUMN IF NOT EXISTS cliente_id INTEGER REFERENCES clientes(id);
@@ -182,7 +184,7 @@ guias = pd.DataFrame(columns=['remitente', 'numero_guia', 'destinatario', 'direc
 despachos = []
 recepciones = []
 recogidas = []
-clientes = []  # cache liviano para selects
+clientes = []
 
 def cargar_datos_desde_db():
     global zonas, mensajeros, guias, despachos, recepciones, recogidas, clientes
@@ -221,11 +223,6 @@ cargar_datos_desde_db()
 # =========================
 
 def df_to_excel_download(df: pd.DataFrame, base_name: str, sheet_name: str = "Hoja1", date_format: str | None = None):
-    """
-    Retorna un send_file con un Excel generado en memoria.
-    - Auto-anchos de columnas
-    - Formato de fecha configurable (por defecto: 'yyyy-mm-dd hh:mm:ss')
-    """
     if df is None:
         df = pd.DataFrame()
 
@@ -303,7 +300,6 @@ def cargar_base():
                 guias = read_sql_df("SELECT remitente, numero_guia, destinatario, direccion, ciudad FROM guias;")
                 globals()["guias"] = guias
 
-                # Guardar archivo (almacenamiento efímero en Render, válido para debug)
                 archivo.save(os.path.join(DATA_DIR, archivo.filename))
                 flash('Base de datos cargada correctamente.', 'success')
             else:
@@ -336,7 +332,7 @@ def registrar_mensajero():
     if request.method == 'POST':
         nombre = request.form.get('nombre')
         zona_nombre = request.form.get('zona')
-        if nombre y zona_nombre:
+        if nombre and zona_nombre:
             zona_obj = next((z for z in zonas if z.nombre == zona_nombre), None)
             if not zona_obj:
                 flash('Zona no encontrada', 'danger')
@@ -372,24 +368,20 @@ def despachar_guias():
         with get_conn() as conn:
             cur = conn.cursor(cursor_factory=RealDictCursor)
             for numero in guias_list:
-                # guía existe
                 cur.execute("SELECT 1 FROM guias WHERE numero_guia = %s;", (numero,))
                 if not cur.fetchone():
                     errores.append(f'Guía {numero} no existe (FALTANTE)')
                     continue
-                # ya recepcionada?
                 cur.execute("SELECT * FROM recepciones WHERE numero_guia = %s;", (numero,))
                 recepcion_existente = cur.fetchone()
                 if recepcion_existente:
                     errores.append(f"Guía {numero} ya fue {recepcion_existente['tipo']}")
                     continue
-                # ya despachada?
                 cur.execute("SELECT * FROM despachos WHERE numero_guia = %s;", (numero,))
                 despacho_existente = cur.fetchone()
                 if despacho_existente:
                     errores.append(f'Guía {numero} ya fue despachada a {despacho_existente["mensajero"]}')
                     continue
-                # insertar
                 cur.execute("""
                     INSERT INTO despachos(numero_guia, mensajero, zona, fecha)
                     VALUES (%s, %s, %s, %s);
@@ -447,7 +439,6 @@ def ver_despacho():
         fi=fi, ff=ff
     )
 
-
 @app.get("/ver_despacho/export")
 def export_despacho():
     mensa = (request.args.get('mensajero') or '').strip()
@@ -478,7 +469,7 @@ def export_despacho():
     df = read_sql_df(sql, params=params)
     return df_to_excel_download(df, base_name="despachos_resumen", sheet_name="Resumen", date_format="yyyy-mm-dd")
 
-# ---------- PENDIENTE + export (UI en template) ----------
+# ---------- PENDIENTE + export ----------
 
 @app.route("/pendiente")
 def pendiente():
@@ -486,7 +477,6 @@ def pendiente():
     fi = (request.args.get('fi') or '').strip()
     ff = (request.args.get('ff') or '').strip()
 
-    # Despachos sin recepción
     sql = """
         SELECT
             d.numero_guia,
@@ -558,7 +548,7 @@ def pendiente_export():
     return df_to_excel_download(df, base_name="pendiente", sheet_name="Pendiente", date_format="yyyy-mm-dd")
 
 # ---------- Registrar / ver recepciones + export ----------
-# === NUEVO: Soporte de importación por TXT para ENTREGADA ===
+# Soporte de importación por TXT para ENTREGADA
 
 def _parse_txt_guias(file_storage) -> list:
     """
@@ -571,19 +561,17 @@ def _parse_txt_guias(file_storage) -> list:
     except Exception:
         text = raw.decode('latin-1', errors='ignore')
 
-    # normaliza separadores (coma/espacio) a salto de línea
     text = text.replace(',', '\n').replace('\r', '\n')
     tokens = []
     for line in text.split('\n'):
         line = line.strip()
         if not line:
             continue
-        # también divide por espacios si hay varios en la misma línea
         for chunk in line.split():
             chunk = chunk.strip()
             if chunk:
                 tokens.append(chunk)
-    # quita duplicados conservando orden
+    # quitar duplicados conservando orden
     seen = set()
     gui_list = []
     for t in tokens:
@@ -599,11 +587,10 @@ def registrar_recepcion():
         motivo = request.form.get('motivo', '')
         fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        # Detecta si hay archivo TXT (solo válido para ENTREGADA)
         archivo_txt = request.files.get('archivo_txt')
 
+        # ===== MODO LOTE por TXT (solo ENTREGADA) =====
         if archivo_txt and tipo == 'ENTREGADA':
-            # ======== MODO LOTE POR TXT ========
             nombre_archivo = (archivo_txt.filename or '').lower()
             if not nombre_archivo.endswith('.txt'):
                 flash('El archivo debe ser .txt', 'danger')
@@ -618,26 +605,22 @@ def registrar_recepcion():
             with get_conn() as conn:
                 cur = conn.cursor(cursor_factory=RealDictCursor)
                 for numero_guia in guias_list:
-                    # Valida existencia de guía
                     cur.execute("SELECT 1 AS x FROM guias WHERE numero_guia = %s;", (numero_guia,))
                     if not cur.fetchone():
                         errores.append(f'Guía {numero_guia}: no existe en la base (FALTANTE)')
                         continue
 
-                    # Debe estar despachada
                     cur.execute("SELECT * FROM despachos WHERE numero_guia = %s;", (numero_guia,))
                     despacho_existente = cur.fetchone()
                     if not despacho_existente:
                         errores.append(f'Guía {numero_guia}: no ha sido despachada aún')
                         continue
 
-                    # No debe estar recepcionada
                     cur.execute("SELECT 1 AS x FROM recepciones WHERE numero_guia = %s;", (numero_guia,))
                     if cur.fetchone():
                         errores.append(f'Guía {numero_guia}: ya está recepcionada')
                         continue
 
-                    # Inserta recepción ENTREGADA (motivo vacío)
                     cur.execute("""
                         INSERT INTO recepciones(numero_guia, tipo, motivo, fecha)
                         VALUES (%s, %s, %s, %s);
@@ -652,9 +635,8 @@ def registrar_recepcion():
             cargar_datos_desde_db()
             return redirect(url_for('registrar_recepcion'))
 
-        # ======== MODO INDIVIDUAL (COMPORTAMIENTO EXISTENTE) ========
+        # ===== MODO INDIVIDUAL (comportamiento existente) =====
         numero_guia = request.form.get('numero_guia', '').strip()
-
         if not numero_guia:
             flash('Debe ingresar un número de guía o subir un .txt (si ENTREGADA).', 'warning')
             return redirect(url_for('registrar_recepcion'))
@@ -688,7 +670,7 @@ def registrar_recepcion():
 @app.route("/ver_recepciones")
 def ver_recepciones():
     numero = (request.args.get('numero_guia') or '').strip().lower()
-    tipo = (request.args.get('tipo') or '').strip().upper()  # ENTREGADA/DEVUELTA
+    tipo = (request.args.get('tipo') or '').strip().upper()
     fi = (request.args.get('fi') or '').strip()
     ff = (request.args.get('ff') or '').strip()
 
@@ -851,13 +833,12 @@ def export_liquidacion():
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        # Resumen
         df_resumen.to_excel(writer, index=False, sheet_name="Resumen")
         ws = writer.sheets["Resumen"]
         for idx, col in enumerate(df_resumen.columns, start=1):
             max_len = max([len(str(col))] + [len(str(x)) for x in df_resumen[col].astype(str).values])
             ws.column_dimensions[get_column_letter(idx)].width = max(12, min(40, max_len + 2))
-        # Detalle
+
         df_detalle2 = df_detalle.copy()
         for col in df_detalle2.columns:
             if pd.api.types.is_datetime64_any_dtype(df_detalle2[col]):
@@ -885,175 +866,6 @@ def export_liquidacion():
         download_name=filename,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
-# ---------- NUEVO: Clientes (crear/listar) ----------
-
-@app.route("/clientes", methods=["GET", "POST"])
-def clientes_view():
-    if request.method == "POST":
-        nombre = (request.form.get("nombre") or "").strip()
-        telefono = (request.form.get("telefono") or "").strip()
-        direccion = (request.form.get("direccion") or "").strip()
-        ciudad = (request.form.get("ciudad") or "").strip()
-        contacto = (request.form.get("contacto") or "").strip()
-
-        if not nombre:
-            flash("El nombre del cliente es obligatorio.", "danger")
-            return redirect(url_for("clientes_view"))
-
-        ya = db_fetchone_dict("SELECT 1 AS x FROM clientes WHERE LOWER(nombre)=LOWER(%s);", (nombre,))
-        if ya:
-            flash("Ese cliente ya existe.", "warning")
-        else:
-            db_exec("""
-                INSERT INTO clientes(nombre, telefono, direccion, ciudad, contacto)
-                VALUES (%s,%s,%s,%s,%s);
-            """, (nombre, telefono, direccion, ciudad, contacto))
-            flash("Cliente creado.", "success")
-
-        cargar_datos_desde_db()
-        return redirect(url_for("clientes_view"))
-
-    return render_template("clientes.html", clientes=clientes)
-
-# ---- Alta rápida desde Registrar Recogida ----
-@app.post("/clientes_quick")
-def clientes_quick():
-    nombre = (request.form.get("nombre") or "").strip()
-    if not nombre:
-        flash("El nombre del cliente es obligatorio.", "danger")
-        return redirect(url_for("registrar_recogida"))
-    ya = db_fetchone_dict("SELECT 1 AS x FROM clientes WHERE LOWER(nombre)=LOWER(%s);", (nombre,))
-    if ya:
-        flash("Ese cliente ya existe.", "warning")
-    else:
-        db_exec("INSERT INTO clientes(nombre) VALUES (%s);", (nombre,))
-        flash("Cliente creado.", "success")
-    cargar_datos_desde_db()
-    return redirect(url_for("registrar_recogida"))
-
-# ---------- Recogidas + export (SOLO FECHA) ----------
-
-@app.route("/registrar_recogida", methods=["GET", "POST"])
-def registrar_recogida():
-    if request.method == 'POST':
-        numero_guia = (request.form.get('numero_guia') or '').strip()
-        fecha_raw = (request.form.get('fecha') or '').strip()  # 'YYYY-MM-DD'
-        observaciones = (request.form.get('observaciones') or '').strip()
-        cliente_id = request.form.get('cliente_id')  # puede venir vacío
-
-        if not numero_guia or not fecha_raw:
-            flash('Debe completar número de guía y fecha', 'danger')
-            return redirect(url_for('registrar_recogida'))
-
-        cliente_id_val = int(cliente_id) if (cliente_id and cliente_id.isdigit()) else None
-
-        # Guardamos como DATE (sin hora). La columna es TIMESTAMPTZ, Postgres castea, y siempre mostraremos DATE.
-        db_exec("""
-            INSERT INTO recogidas(numero_guia, fecha, observaciones, cliente_id)
-            VALUES (%s, %s::date, %s, %s);
-        """, (numero_guia, fecha_raw, observaciones, cliente_id_val))
-
-        flash(f'Recogida registrada para la guía {numero_guia}', 'success')
-        cargar_datos_desde_db()
-        return redirect(url_for('registrar_recogida'))
-
-    return render_template('registrar_recogida.html', clientes=clientes)
-
-@app.route("/ver_recogidas")
-def ver_recogidas():
-    filtro_numero = (request.args.get('filtro_numero') or '').strip().lower()
-    fi = (request.args.get('fi') or '').strip()
-    ff = (request.args.get('ff') or '').strip()
-    cliente_id = (request.args.get('cliente_id') or '').strip()
-
-    sql = """
-        SELECT
-            r.id,
-            r.numero_guia,
-            DATE(r.fecha) AS fecha,     -- solo fecha
-            r.observaciones,
-            r.cliente_id,
-            c.nombre AS cliente
-        FROM recogidas r
-        LEFT JOIN clientes c ON c.id = r.cliente_id
-        WHERE 1=1
-    """
-    params = []
-
-    if filtro_numero:
-        sql += " AND LOWER(COALESCE(r.numero_guia,'')) LIKE %s"
-        params.append(f"%{filtro_numero}%")
-
-    if fi:
-        sql += " AND DATE(r.fecha) >= %s"
-        params.append(fi)
-
-    if ff:
-        sql += " AND DATE(r.fecha) <= %s"
-        params.append(ff)
-
-    if cliente_id and cliente_id.isdigit():
-        sql += " AND r.cliente_id = %s"
-        params.append(int(cliente_id))
-
-    sql += " ORDER BY DATE(r.fecha) DESC, r.id DESC"
-
-    rows = db_fetchall_dict(sql, params=params)
-
-    return render_template(
-        'ver_recogidas.html',
-        recogidas=rows,
-        clientes=clientes,          # para el select
-        cliente_sel=cliente_id,     # para mantener selección
-        fi=fi, ff=ff,
-        filtro_numero=(request.args.get('filtro_numero') or '').strip()
-    )
-
-@app.get("/ver_recogidas/export")
-def export_recogidas():
-    filtro_numero = (request.args.get('filtro_numero') or '').strip().lower()
-    fi = (request.args.get('fi') or '').strip()
-    ff = (request.args.get('ff') or '').strip()
-    cliente_id = (request.args.get('cliente_id') or '').strip()
-
-    sql = """
-        SELECT
-            r.id,
-            r.numero_guia,
-            DATE(r.fecha) AS fecha,     -- solo fecha
-            r.observaciones,
-            c.nombre AS cliente
-        FROM recogidas r
-        LEFT JOIN clientes c ON c.id = r.cliente_id
-        WHERE 1=1
-    """
-    params = []
-
-    if filtro_numero:
-        sql += " AND LOWER(COALESCE(r.numero_guia, '')) LIKE %s"
-        params.append(f"%{filtro_numero}%")
-
-    if fi:
-        sql += " AND DATE(r.fecha) >= %s"
-        params.append(fi)
-
-    if ff:
-        sql += " AND DATE(r.fecha) <= %s"
-        params.append(ff)
-
-    if cliente_id and cliente_id.isdigit():
-        sql += " AND r.cliente_id = %s"
-        params.append(int(cliente_id))
-
-    sql += " ORDER BY DATE(r.fecha) DESC, r.id DESC"
-
-    df = read_sql_df(sql, params=params)
-    if df.empty:
-        df = pd.DataFrame(columns=["id", "numero_guia", "fecha", "observaciones", "cliente"])
-
-    # Fuerza formato de fecha sin hora en el Excel
-    return df_to_excel_download(df, base_name="recogidas", sheet_name="Recogidas", date_format="yyyy-mm-dd")
 
 # ---------- Endpoints util ----------
 
