@@ -336,7 +336,7 @@ def registrar_mensajero():
     if request.method == 'POST':
         nombre = request.form.get('nombre')
         zona_nombre = request.form.get('zona')
-        if nombre and zona_nombre:
+        if nombre y zona_nombre:
             zona_obj = next((z for z in zonas if z.nombre == zona_nombre), None)
             if not zona_obj:
                 flash('Zona no encontrada', 'danger')
@@ -558,14 +558,106 @@ def pendiente_export():
     return df_to_excel_download(df, base_name="pendiente", sheet_name="Pendiente", date_format="yyyy-mm-dd")
 
 # ---------- Registrar / ver recepciones + export ----------
+# === NUEVO: Soporte de importación por TXT para ENTREGADA ===
+
+def _parse_txt_guias(file_storage) -> list:
+    """
+    Lee un FileStorage .txt y devuelve una lista de guías normalizada.
+    Acepta: una por línea, o separadas por comas/espacios.
+    """
+    raw = file_storage.read()
+    try:
+        text = raw.decode('utf-8', errors='ignore')
+    except Exception:
+        text = raw.decode('latin-1', errors='ignore')
+
+    # normaliza separadores (coma/espacio) a salto de línea
+    text = text.replace(',', '\n').replace('\r', '\n')
+    tokens = []
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        # también divide por espacios si hay varios en la misma línea
+        for chunk in line.split():
+            chunk = chunk.strip()
+            if chunk:
+                tokens.append(chunk)
+    # quita duplicados conservando orden
+    seen = set()
+    gui_list = []
+    for t in tokens:
+        if t not in seen:
+            gui_list.append(t)
+            seen.add(t)
+    return gui_list
 
 @app.route("/registrar_recepcion", methods=["GET", "POST"])
 def registrar_recepcion():
     if request.method == 'POST':
-        numero_guia = request.form.get('numero_guia')
         tipo = request.form.get('estado')  # ENTREGADA o DEVUELTA
         motivo = request.form.get('motivo', '')
         fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # Detecta si hay archivo TXT (solo válido para ENTREGADA)
+        archivo_txt = request.files.get('archivo_txt')
+
+        if archivo_txt and tipo == 'ENTREGADA':
+            # ======== MODO LOTE POR TXT ========
+            nombre_archivo = (archivo_txt.filename or '').lower()
+            if not nombre_archivo.endswith('.txt'):
+                flash('El archivo debe ser .txt', 'danger')
+                return redirect(url_for('registrar_recepcion'))
+
+            guias_list = _parse_txt_guias(archivo_txt)
+            if not guias_list:
+                flash('El archivo .txt no contiene guías válidas.', 'warning')
+                return redirect(url_for('registrar_recepcion'))
+
+            errores, exito = [], []
+            with get_conn() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+                for numero_guia in guias_list:
+                    # Valida existencia de guía
+                    cur.execute("SELECT 1 AS x FROM guias WHERE numero_guia = %s;", (numero_guia,))
+                    if not cur.fetchone():
+                        errores.append(f'Guía {numero_guia}: no existe en la base (FALTANTE)')
+                        continue
+
+                    # Debe estar despachada
+                    cur.execute("SELECT * FROM despachos WHERE numero_guia = %s;", (numero_guia,))
+                    despacho_existente = cur.fetchone()
+                    if not despacho_existente:
+                        errores.append(f'Guía {numero_guia}: no ha sido despachada aún')
+                        continue
+
+                    # No debe estar recepcionada
+                    cur.execute("SELECT 1 AS x FROM recepciones WHERE numero_guia = %s;", (numero_guia,))
+                    if cur.fetchone():
+                        errores.append(f'Guía {numero_guia}: ya está recepcionada')
+                        continue
+
+                    # Inserta recepción ENTREGADA (motivo vacío)
+                    cur.execute("""
+                        INSERT INTO recepciones(numero_guia, tipo, motivo, fecha)
+                        VALUES (%s, %s, %s, %s);
+                    """, (numero_guia, 'ENTREGADA', '', fecha))
+                    exito.append(f'Guía {numero_guia}: ENTREGADA')
+
+            if errores:
+                flash("Errores en lote:<br>" + "<br>".join(errores), 'danger')
+            if exito:
+                flash("Recepciones registradas:<br>" + "<br>".join(exito), 'success')
+
+            cargar_datos_desde_db()
+            return redirect(url_for('registrar_recepcion'))
+
+        # ======== MODO INDIVIDUAL (COMPORTAMIENTO EXISTENTE) ========
+        numero_guia = request.form.get('numero_guia', '').strip()
+
+        if not numero_guia:
+            flash('Debe ingresar un número de guía o subir un .txt (si ENTREGADA).', 'warning')
+            return redirect(url_for('registrar_recepcion'))
 
         existe_guia = db_fetchone_dict("SELECT 1 AS x FROM guias WHERE numero_guia = %s;", (numero_guia,))
         if not existe_guia:
